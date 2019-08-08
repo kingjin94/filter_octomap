@@ -35,9 +35,11 @@
 #include <math.h>
 #include "moveit_msgs/PlanningScene.h"
 #include <stack> 
+#include "std_msgs/Float64.h"
 
 ros::Publisher update_publisher;
 ros::Publisher octomap_publisher;
+ros::Publisher entropy_publisher;
 
 //void recurse(int depth, octomap::OcTreeNode* node, octomap::OcTree* octomap) {
 	//// Basecase
@@ -119,7 +121,12 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 		total_weighted_H += v*H;
 	}
 	ROS_INFO("Total volume: %f", total_v);
-	ROS_INFO("Average entropy: %f", (total_weighted_H - (3*3*1.5 - total_v)*2.*.5*std::log(.5)) / (3*3*1.5)); 
+	double entropy = (total_weighted_H - (3*3*1.5 - total_v)*2.*.5*std::log(.5)) / (3*3*1.5);
+	ROS_INFO("Average entropy: %f", entropy); 
+	
+	std_msgs::Float64 newEntropyMsg;
+	newEntropyMsg.data = entropy;
+	entropy_publisher.publish(newEntropyMsg);
 	
 	// Only expands already used nodes, does not produce new
 	//ROS_INFO("Num nodes: %d", octomap->calcNumNodes());
@@ -338,6 +345,7 @@ int main(int argc, char **argv)
 // %EndTag(SUBSCRIBER)%
 	update_publisher = n.advertise<moveit_msgs::PlanningScene>("planning_scene", 10);
 	octomap_publisher = n.advertise<octomap_msgs::Octomap>("octomap_new", 10);
+	entropy_publisher = n.advertise<std_msgs::Float64>("octomap_new/entropy", 100);
   /**
    * ros::spin() will enter a loop, pumping callbacks.  With this version, all
    * callbacks will be called from within this thread (the main one).  ros::spin()
