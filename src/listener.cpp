@@ -61,12 +61,12 @@ ros::Publisher octomap_publisher;
 void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 {
   ROS_INFO("Received message number %d", msg->header.seq);
-  ROS_INFO("Got type: %s", msg->id.c_str());
+  //ROS_INFO("Got type: %s", msg->id.c_str());
   if(!(msg->id == "OcTree")) {
 	  ROS_INFO("Non supported octree type");
 	  return;
   }
-  ROS_INFO("Received OctomapBinary message (size: %d bytes)", (int)msg->data.size());
+  //ROS_INFO("Received OctomapBinary message (size: %d bytes)", (int)msg->data.size());
   
   // May have to get transform later
   
@@ -84,12 +84,12 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	  ROS_INFO("Failed to deserialize octree message.");
 	  return;
 	}
-	ROS_INFO("Retrieved octree from message.");
-	ROS_INFO("Tree os layers %d deep.", octomap->getTreeDepth());
+	//ROS_INFO("Retrieved octree from message.");
+	//ROS_INFO("Tree os layers %d deep.", octomap->getTreeDepth());
   double minX, minY, minZ, maxX, maxY, maxZ;
   octomap->getMetricMin(minX, minY, minZ);
   octomap->getMetricMax(maxX, maxY, maxZ);
-  ROS_INFO("Tree min: (%f, %f, %f); max: (%f, %f, %f)", minX, minY, minZ, maxX, maxY, maxZ);
+  //ROS_INFO("Tree min: (%f, %f, %f); max: (%f, %f, %f)", minX, minY, minZ, maxX, maxY, maxZ);
   ROS_INFO("Probability for occupied: %f", octomap->getOccupancyThres());
 
 	/* generate copy of octree, where:
@@ -140,11 +140,11 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	
 	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
 	total_weighted_H = 0;
-	for(float z = -0.1; z <= 1.5; z += 0.01)
+	for(float z = -0.09; z <= 1.49; z += 0.02) // increment by resolution to hit all possible leafs
     {
-        for(float y = -1.5; y <= 1.5; y += 0.01)
+        for(float y = -1.49; y <= 1.49; y += 0.02)
         {
-            for(float x = -1.5; x <= 1.5; x += 0.01)
+            for(float x = -1.49; x <= 1.49; x += 0.02)
             {
                 if(-0.99 <= x && x <= 0.19 &&
                    -.99 <= y && y <= .99 && 
@@ -168,7 +168,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
             }
         }
     }
-    ROS_INFO("Avg. local entropy in surrounding: %f", total_weighted_H / 160/300/300);
+    ROS_INFO("Avg. local entropy in surrounding: %f", total_weighted_H / 158/298/298); // normalize to volume of tripple for loop
     
     // Own tree iteration to set part of the map occupied
     /* Pseudo code
@@ -268,7 +268,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	octomap->updateInnerOccupancy();
 	octomap->prune(); // Compress after major changes have been applied
 	
-	octomap->write("postPrune.bt");
+	//octomap->write("postPrune.bt");
 
 	/*
 	 * 	scene_update = PlanningScene()
@@ -283,7 +283,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	 octomap_msgs::Octomap newMapMsg;
 	 newMapMsg.header.frame_id = "world";
 	 //octomap->setOccupancyThres(0.15);
-	 ROS_INFO("New threshold: %f", octomap->getOccupancyThres());
+	 //ROS_INFO("New threshold: %f", octomap->getOccupancyThres());
 	 //octomap_msgs::fullMapToMsg(*octomap, newMapMsg);
 	 octomap_msgs::binaryMapToMsg(*octomap, newMapMsg);
 	 octomap_publisher.publish(newMapMsg);
