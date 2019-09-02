@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(octomap_helper)
+project(filter_octomap)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -110,7 +110,7 @@ find_package(Boost REQUIRED COMPONENTS thread )
 ## DEPENDS: system dependencies of this project that dependent projects also need
 #catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES octomap_helper
+#  LIBRARIES filter_octomap
 #  CATKIN_DEPENDS octomap_msgs roscpp rospy std_msgs
 #  DEPENDS system_lib
 #)
@@ -143,7 +143,7 @@ set(SOURCE_FILES src/listener.cpp)
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/octomap_helper.cpp
+#   src/${PROJECT_NAME}/filter_octomap.cpp
 # )
 add_library(${PROJECT_NAME} ${SOURCE_FILES})
 target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES})
@@ -157,6 +157,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(listener src/listener.cpp)
+add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -167,9 +168,13 @@ add_executable(listener src/listener.cpp)
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 add_dependencies(listener ${catkin_LIBRARIES})
+add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(listener
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(octomap_entropy_publisher
   ${catkin_LIBRARIES}
 )
 
@@ -213,7 +218,7 @@ target_link_libraries(listener
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_octomap_helper.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_filter_octomap.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()
