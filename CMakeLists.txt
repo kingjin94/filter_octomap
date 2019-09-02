@@ -139,7 +139,7 @@ link_directories(${catkin_LIBRARY_DIRS}
                  ${Boost_LIBRARY_DIRS}
                  ${octomap_LIBRARY_DIRS}) 
                  
-set(SOURCE_FILES src/listener.cpp)
+set(SOURCE_FILES src/octomap_alter_unknown.cpp)
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
@@ -156,7 +156,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(listener src/listener.cpp)
+add_executable(octomap_alter_unknown src/octomap_alter_unknown.cpp)
 add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 
 ## Rename C++ executable without prefix
@@ -167,11 +167,11 @@ add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-add_dependencies(listener ${catkin_LIBRARIES})
+add_dependencies(octomap_alter_unknown ${catkin_LIBRARIES})
 add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(listener
+target_link_libraries(octomap_alter_unknown
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_entropy_publisher

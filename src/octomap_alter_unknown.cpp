@@ -100,33 +100,33 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	 *   - publish this new map to the planning scene as in planningSceneUpdater.py
 	*/
 
-	double total_v = 0;
-	double total_weighted_H = 0;
-	// Go over all leafs
-	for(octomap::OcTree::leaf_iterator it = octomap->begin_leafs(),
-       end=octomap->end_leafs(); it!= end; ++it)
-	{
-		//manipulate node, e.g.:
-		//std::cout << "Node center: " << it.getCoordinate() << std::endl;
-		//std::cout << "Node size: " << it.getSize() << std::endl;
-		//std::cout << "Node value: " << it->getValue() << std::endl;
-		double log_odd = it->getLogOdds();
-		//std::cout << "Node value: " << it->getLogOdds() << std::endl;
-		double p = std::exp(log_odd) / (1 + std::exp(log_odd));
-		double H = -p*std::log(p) - (1-p)*std::log(1-p);
-		//std::cout << "Node entropy: " << H << std::endl;
-		double v = (pow(it.getSize(),3));
+	//double total_v = 0;
+	//double total_weighted_H = 0;
+	//// Go over all leafs
+	//for(octomap::OcTree::leaf_iterator it = octomap->begin_leafs(),
+       //end=octomap->end_leafs(); it!= end; ++it)
+	//{
+		////manipulate node, e.g.:
+		////std::cout << "Node center: " << it.getCoordinate() << std::endl;
+		////std::cout << "Node size: " << it.getSize() << std::endl;
+		////std::cout << "Node value: " << it->getValue() << std::endl;
+		//double log_odd = it->getLogOdds();
+		////std::cout << "Node value: " << it->getLogOdds() << std::endl;
+		//double p = std::exp(log_odd) / (1 + std::exp(log_odd));
+		//double H = -p*std::log(p) - (1-p)*std::log(1-p);
+		////std::cout << "Node entropy: " << H << std::endl;
+		//double v = (pow(it.getSize(),3));
 		
-		total_v+=v;
-		total_weighted_H += v*H;
-	}
-	ROS_INFO("Total volume: %f", total_v);
-	double entropy = (total_weighted_H - (3*3*1.5 - total_v)*2.*.5*std::log(.5)) / (3*3*1.5);
-	ROS_INFO("Average entropy: %f", entropy); 
+		//total_v+=v;
+		//total_weighted_H += v*H;
+	//}
+	//ROS_INFO("Total volume: %f", total_v);
+	//double entropy = (total_weighted_H - (3*3*1.5 - total_v)*2.*.5*std::log(.5)) / (3*3*1.5);
+	//ROS_INFO("Average entropy: %f", entropy); 
 	
-	std_msgs::Float64 newEntropyMsg;
-	newEntropyMsg.data = entropy;
-	entropy_publisher.publish(newEntropyMsg);
+	//std_msgs::Float64 newEntropyMsg;
+	//newEntropyMsg.data = entropy;
+	//entropy_publisher.publish(newEntropyMsg);
 	
 	// Only expands already used nodes, does not produce new
 	//ROS_INFO("Num nodes: %d", octomap->calcNumNodes());
@@ -146,7 +146,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	//setNodeValue (const OcTreeKey &key, float log_odds_value, bool lazy_eval=false)
 	
 	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
-	total_weighted_H = 0;
+	double total_weighted_H = 0;
 	for(float z = -0.09; z <= 1.49; z += 0.02) // increment by resolution to hit all possible leafs
     {
         for(float y = -1.49; y <= 1.49; y += 0.02)
