@@ -36,6 +36,7 @@
 #include "moveit_msgs/PlanningScene.h"
 #include <stack> 
 #include "std_msgs/Float64.h"
+#include <assert.h>
 
 ros::Publisher update_publisher;
 ros::Publisher octomap_publisher;
@@ -56,6 +57,21 @@ ros::Publisher entropy_publisher;
 	//}
 //}
 
+/* Returns whether p is inside the interval made up of points x1 and x2 which was extended to all sides by width
+ * */
+bool is_inside_cube(octomap::point3d p, octomap::point3d X1, octomap::point3d X2,  float width) {
+	float x1 = X1.x()-width, y1 = X1.y()-width, z1 = X1.z()-width, x2 = X2.x()+width, y2 = X2.y()+width, z2 = X2.z()+width;
+	//ROS_INFO("X1: %f, %f, %f; X2: %f, %f, %f", x1,y1,z1, x2,y2,z2);
+	return x1 < p.x() && p.x() < x2 && y1 < p.y() && p.y() < y2 && z1 < p.z() && p.z() < z2;
+}
+
+/* Returns whether p is outside the interval made up of points x1 and x2 which was extended to all sides by width
+ * */
+bool is_outside_cube(octomap::point3d p, octomap::point3d X1, octomap::point3d X2,  float width) {
+	float x1 = X1.x()-width, y1 = X1.y()-width, z1 = X1.z()-width, x2 = X2.x()+width, y2 = X2.y()+width, z2 = X2.z()+width;
+	return p.x() < x1 || x2 < p.x() || p.y() < y1 || y2 < p.y() || p.z() < z1 || z2 < p.z();
+}
+
 inline void add_free_and_occupied_faster(octomap::OcTree* octomap) {
 	// Own tree iteration to set part of the map occupied
     /* Pseudo code
@@ -75,6 +91,8 @@ inline void add_free_and_occupied_faster(octomap::OcTree* octomap) {
      * 				else:
      * 					s.push(k)
      * */
+     
+     octomap::point3d goal_boundary1(-1.,-1,-.1), goal_boundary2(0.1,1.,1.4);
     
     // Inspired by the iterator: https://github.com/OctoMap/octomap/blob/ebff3f0a53551ad6ccee73e6a09d1edda1916784/octomap/include/octomap/OcTreeIterator.hxx 
     struct StackElement{
@@ -89,20 +107,21 @@ inline void add_free_and_occupied_faster(octomap::OcTree* octomap) {
 	root.key[0] = root.key[1] = root.key[2] = 32768; //octomap->tree_max_val; // 2^15 --> perfect in the middle, I guess
 	s.push(root);
 	
-	octomap->write("preModify.bt");
+	//octomap->write("preModify.bt");
 	
 	while(!s.empty()) {
 		StackElement here = s.top();
-		s.pop();
-		ROS_INFO("Entering node with key %d, %d, %d", here.key.k[0], here.key.k[1], here.key.k[2]);
+		s.pop(); // Remove top element
+		//ROS_INFO("Entering node with key %d, %d, %d", here.key.k[0], here.key.k[1], here.key.k[2]);
 		StackElement tmp;
 		tmp.depth = here.depth+1;
 		float child_size = octomap->getNodeSize(tmp.depth);
 		
 		if(here.depth<15) { // highest: 15
 			octomap::key_type center_offset_key = 32768 >> tmp.depth;//octomap->tree_max_val >> tmp.depth;
-			for(uint8_t i=0; i<8; ++i) {
+			for(int i=7; i>=0; --i) {
 			// Create all children if not deep enough
+				assert(i<8);
 				if(!octomap->nodeChildExists(here.node, i)) {
 					octomap->createNodeChild (here.node, i);
 				}
@@ -111,42 +130,36 @@ inline void add_free_and_occupied_faster(octomap::OcTree* octomap) {
 				// select children action
 				octomap::point3d child_pos = octomap->keyToCoord(tmp.key, tmp.depth);
 				
-				ROS_INFO("Looking at (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, tmp.depth); 
+				//ROS_INFO("Looking at (%f, %f, %f) with size %f in depth %d and value %f", child_pos.x(), child_pos.y(), child_pos.z(), child_size, tmp.depth, tmp.node->getLogOdds()); 
 				
-				if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
-					-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
-					0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
-					ROS_INFO("Is inside");
-					octomap->setNodeValue(tmp.key, -2.0); // Node completly within goal area -> set free
+				if(is_inside_cube(child_pos, goal_boundary1, goal_boundary2, -child_size/2)) {
+					tmp.node->setLogOdds(-2.); //octomap->setNodeValue(tmp.key, -2.0); // Node completly within goal area -> set free
+					//ROS_INFO("Is inside; new node val: %f", tmp.node->getLogOdds());
 					for(uint8_t j=0; j<8; ++j)
 						if(octomap->nodeChildExists(tmp.node, j)) {
-							ROS_INFO("Killed child %d", j);
+							//ROS_INFO("Killed child %d", j);
 							octomap->deleteNodeChild(tmp.node, j);
 						}
 				}
 					
-				else if(-1. > child_pos.x()+child_size/2 || child_pos.x()-child_size/2 > 0.1 ||
-					-1. > child_pos.y()+child_size/2 || child_pos.y()-child_size/2 > 1. ||
-					0. > child_pos.z()+child_size/2 || child_pos.z()-child_size/2 > 1.5) {
-					ROS_INFO("Is outside");
+				else if(is_outside_cube(child_pos, goal_boundary1, goal_boundary2, child_size/2)) {
+					//ROS_INFO("Is outside");
 					continue; // ignore node complete outside goal area
 				}
 				
 				else {
-					ROS_INFO("Is split");
+					//ROS_INFO("Is split");
 					s.push(tmp); // neither completely in nor out --> must be further subdivided
 				}
 					
  			}
 		} else { // is lowest possible
-			child_size*=2;
+			//child_size*=2;
 			octomap::point3d child_pos = octomap->keyToCoord(here.key, here.depth);
-			ROS_INFO("Looking at Leaf (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, here.depth); 
-			if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
-				-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
-				0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
-					octomap->setNodeValue(here.key, -2.0); // Node completly within goal area -> set free
-					ROS_INFO("Is inside");
+			//ROS_INFO("Looking at Leaf (%f, %f, %f) with size %f in depth %d and value %f", child_pos.x(), child_pos.y(), child_pos.z(), child_size, here.depth, here.node->getLogOdds()); 
+			if(is_inside_cube(child_pos, goal_boundary1, goal_boundary2, -child_size/2)) {
+					here.node->setLogOdds(-2.); //octomap->setNodeValue(here.key, -2.0); // Node completly within goal area -> set free
+					//ROS_INFO("Is inside; new node val: %f", here.node->getLogOdds());
 				}
 		}
 	}
@@ -227,8 +240,8 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	*/
 	
 	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
-	add_free_and_occupied(octomap);
-	//add_free_and_occupied_faster(octomap);
+	//add_free_and_occupied(octomap);
+	add_free_and_occupied_faster(octomap);
     
     //octomap->write("postModify.bt");
 	octomap->updateInnerOccupancy();
