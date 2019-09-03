@@ -301,6 +301,9 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	 updateMsg.world.octomap.header.frame_id = "world";
 	 update_publisher.publish(updateMsg);
 	 ROS_INFO("Sent OctomapBinary message (size: %d bytes)", (int)newMapMsg.data.size());
+	 
+	 // free memory
+	 delete tree;
 }
 // %EndTag(CALLBACK)%
 

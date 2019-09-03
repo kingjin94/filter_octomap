@@ -53,7 +53,7 @@ void entropyCalcCallback(const octomap_msgs::Octomap::ConstPtr& msg)
   
   // creating octree
   octomap::OcTree* octomap = NULL;
-  octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
+  octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg); // ! Allocates memory which needs to be freed (http://docs.ros.org/indigo/api/octomap_msgs/html/namespaceoctomap__msgs.html#aebd9cf5ae6b6741b05e9f8dee383f410)
   
   if (tree){
 	  octomap = dynamic_cast<octomap::OcTree*>(tree);
@@ -106,6 +106,9 @@ void entropyCalcCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	std_msgs::Float64 newEntropyMsg;
 	newEntropyMsg.data = entropy;
 	entropy_publisher.publish(newEntropyMsg);
+	
+	// Clean memory
+	delete tree;
 }
 
 int main(int argc, char **argv)
