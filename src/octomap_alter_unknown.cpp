@@ -56,96 +56,103 @@ ros::Publisher entropy_publisher;
 	//}
 //}
 
-/**
- * A subscriber to octomap msg, following https://github.com/OctoMap/octomap_rviz_plugins/blob/kinetic-devel/src/occupancy_grid_display.cpp
- */
-// %Tag(CALLBACK)%
-void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
-{
-  ROS_INFO("Received message number %d", msg->header.seq);
-  //ROS_INFO("Got type: %s", msg->id.c_str());
-  if(!(msg->id == "OcTree")) {
-	  ROS_INFO("Non supported octree type");
-	  return;
-  }
-  //ROS_INFO("Received OctomapBinary message (size: %d bytes)", (int)msg->data.size());
-  
-  // May have to get transform later
-  
-  // creating octree
-  octomap::OcTree* octomap = NULL;
-  octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
-  
-  if (tree){
-	  octomap = dynamic_cast<octomap::OcTree*>(tree);
-	  if(!octomap){
-		  ROS_INFO("Wrong octomap type. Use a different display type.");
-		  return;
-	  }
-  } else {
-	  ROS_INFO("Failed to deserialize octree message.");
-	  return;
-	}
-	//ROS_INFO("Retrieved octree from message.");
-	//ROS_INFO("Tree os layers %d deep.", octomap->getTreeDepth());
-  double minX, minY, minZ, maxX, maxY, maxZ;
-  octomap->getMetricMin(minX, minY, minZ);
-  octomap->getMetricMax(maxX, maxY, maxZ);
-  //ROS_INFO("Tree min: (%f, %f, %f); max: (%f, %f, %f)", minX, minY, minZ, maxX, maxY, maxZ);
-  ROS_INFO("Probability for occupied: %f", octomap->getOccupancyThres());
-
-	/* generate copy of octree, where:
-	 *   - space in the back is known free space --> set with itterator begin_leafs_bbx and setNodeValue
-	 *   - everything else is forced non-free if its occupancy probability is higher than l_low
-	 *   - publish this new map to the planning scene as in planningSceneUpdater.py
-	*/
-
-	//double total_v = 0;
-	//double total_weighted_H = 0;
-	//// Go over all leafs
-	//for(octomap::OcTree::leaf_iterator it = octomap->begin_leafs(),
-       //end=octomap->end_leafs(); it!= end; ++it)
-	//{
-		////manipulate node, e.g.:
-		////std::cout << "Node center: " << it.getCoordinate() << std::endl;
-		////std::cout << "Node size: " << it.getSize() << std::endl;
-		////std::cout << "Node value: " << it->getValue() << std::endl;
-		//double log_odd = it->getLogOdds();
-		////std::cout << "Node value: " << it->getLogOdds() << std::endl;
-		//double p = std::exp(log_odd) / (1 + std::exp(log_odd));
-		//double H = -p*std::log(p) - (1-p)*std::log(1-p);
-		////std::cout << "Node entropy: " << H << std::endl;
-		//double v = (pow(it.getSize(),3));
+inline void add_free_and_occupied_faster(octomap::OcTree* octomap) {
+	// Own tree iteration to set part of the map occupied
+    /* Pseudo code
+     * Stack<node> s
+     * s.push(octree->getRoot())
+     * 
+     * while !s.isEmpty():
+     * 		here = s.pop
+     * 		for k in here.children:
+     *			if k.completelyInsideGoalArea: --> node does not know its position nor size! (only iterators do), can be fixed by enhancing the stack element
+     * 				k.setFree()
+     * 			else if k.completelyOutsideGoalArea:
+     * 				k.setOccupied()
+     * 			else if k.partiallyInsideGoalArea:
+     * 				if k.onMaxDepth():
+     * 					k.setOccupied() // overapproximate occupied area
+     * 				else:
+     * 					s.push(k)
+     * */
+    
+    // Inspired by the iterator: https://github.com/OctoMap/octomap/blob/ebff3f0a53551ad6ccee73e6a09d1edda1916784/octomap/include/octomap/OcTreeIterator.hxx 
+    struct StackElement{
+        octomap::OcTreeNode* node;
+        octomap::OcTreeKey key;
+        uint8_t depth;
+    };
+	std::stack<StackElement,std::vector<StackElement> > s;
+	StackElement root;
+	root.node = octomap->getRoot();
+	root.depth = 0;
+	root.key[0] = root.key[1] = root.key[2] = 32768; //octomap->tree_max_val; // 2^15 --> perfect in the middle, I guess
+	s.push(root);
+	
+	octomap->write("preModify.bt");
+	
+	while(!s.empty()) {
+		StackElement here = s.top();
+		s.pop();
+		ROS_INFO("Entering node with key %d, %d, %d", here.key.k[0], here.key.k[1], here.key.k[2]);
+		StackElement tmp;
+		tmp.depth = here.depth+1;
+		float child_size = octomap->getNodeSize(tmp.depth);
 		
-		//total_v+=v;
-		//total_weighted_H += v*H;
-	//}
-	//ROS_INFO("Total volume: %f", total_v);
-	//double entropy = (total_weighted_H - (3*3*1.5 - total_v)*2.*.5*std::log(.5)) / (3*3*1.5);
-	//ROS_INFO("Average entropy: %f", entropy); 
-	
-	//std_msgs::Float64 newEntropyMsg;
-	//newEntropyMsg.data = entropy;
-	//entropy_publisher.publish(newEntropyMsg);
-	
-	// Only expands already used nodes, does not produce new
-	//ROS_INFO("Num nodes: %d", octomap->calcNumNodes());
-	//octomap->expand();
-	//ROS_INFO("Num nodes (after expand): %d", octomap->calcNumNodes());
-	//for(octomap::OcTree::leaf_iterator it = octomap->begin_leafs(),
-       //end=octomap->end_leafs(); it!= end; ++it)
-	//{
-		//if(-1. <= it.getX()-it.getSize()/2 && it.getX()+it.getSize()/2 <= 0.1 && 
-		//-1. <= it.getY()-it.getSize()/2 && it.getY()+it.getSize()/2 <= 1. && 
-		//0. <= it.getZ()-it.getSize()/2 && it.getZ()+it.getSize()/2 <= 1.5) {
-			//it->setLogOdds(-1.);
-			//ROS_INFO("Change Log Odds");
-		//}
-	//}
-	
-	//setNodeValue (const OcTreeKey &key, float log_odds_value, bool lazy_eval=false)
-	
-	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
+		if(here.depth<15) { // highest: 15
+			octomap::key_type center_offset_key = 32768 >> tmp.depth;//octomap->tree_max_val >> tmp.depth;
+			for(uint8_t i=0; i<8; ++i) {
+			// Create all children if not deep enough
+				if(!octomap->nodeChildExists(here.node, i)) {
+					octomap->createNodeChild (here.node, i);
+				}
+				tmp.node = octomap->getNodeChild(here.node, i);
+				octomap::computeChildKey(i, center_offset_key, here.key, tmp.key);
+				// select children action
+				octomap::point3d child_pos = octomap->keyToCoord(tmp.key, tmp.depth);
+				
+				ROS_INFO("Looking at (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, tmp.depth); 
+				
+				if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
+					-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
+					0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
+					ROS_INFO("Is inside");
+					octomap->setNodeValue(tmp.key, -2.0); // Node completly within goal area -> set free
+					for(uint8_t j=0; j<8; ++j)
+						if(octomap->nodeChildExists(tmp.node, j)) {
+							ROS_INFO("Killed child %d", j);
+							octomap->deleteNodeChild(tmp.node, j);
+						}
+				}
+					
+				else if(-1. > child_pos.x()+child_size/2 || child_pos.x()-child_size/2 > 0.1 ||
+					-1. > child_pos.y()+child_size/2 || child_pos.y()-child_size/2 > 1. ||
+					0. > child_pos.z()+child_size/2 || child_pos.z()-child_size/2 > 1.5) {
+					ROS_INFO("Is outside");
+					continue; // ignore node complete outside goal area
+				}
+				
+				else {
+					ROS_INFO("Is split");
+					s.push(tmp); // neither completely in nor out --> must be further subdivided
+				}
+					
+ 			}
+		} else { // is lowest possible
+			child_size*=2;
+			octomap::point3d child_pos = octomap->keyToCoord(here.key, here.depth);
+			ROS_INFO("Looking at Leaf (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, here.depth); 
+			if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
+				-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
+				0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
+					octomap->setNodeValue(here.key, -2.0); // Node completly within goal area -> set free
+					ROS_INFO("Is inside");
+				}
+		}
+	}
+}
+
+inline void add_free_and_occupied(octomap::OcTree* octomap) {
 	double total_weighted_H = 0;
 	for(float z = -0.09; z <= 1.49; z += 0.02) // increment by resolution to hit all possible leafs
     {
@@ -176,131 +183,74 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
         }
     }
     ROS_INFO("Avg. local entropy in surrounding: %f", total_weighted_H / 158/298/298); // normalize to volume of tripple for loop
+}
+
+/**
+ * A subscriber to octomap msg, following https://github.com/OctoMap/octomap_rviz_plugins/blob/kinetic-devel/src/occupancy_grid_display.cpp
+ */
+// %Tag(CALLBACK)%
+void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
+{
+	// Test if right message type
+	ROS_INFO("Received message number %d", msg->header.seq);
+	if(!(msg->id == "OcTree")) {
+		ROS_INFO("Non supported octree type");
+		return;
+	}
+
+	// creating octree
+	octomap::OcTree* octomap = NULL;
+	octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
+
+	if (tree){
+		octomap = dynamic_cast<octomap::OcTree*>(tree);
+		if(!octomap){
+			ROS_INFO("Wrong octomap type. Use a different display type.");
+			return;
+		}
+	} else {
+		ROS_INFO("Failed to deserialize octree message.");
+		return;
+	}
+	//ROS_INFO("Retrieved octree from message.");
+	//ROS_INFO("Tree os layers %d deep.", octomap->getTreeDepth());
+	double minX, minY, minZ, maxX, maxY, maxZ;
+	octomap->getMetricMin(minX, minY, minZ);
+	octomap->getMetricMax(maxX, maxY, maxZ);
+	//ROS_INFO("Tree min: (%f, %f, %f); max: (%f, %f, %f)", minX, minY, minZ, maxX, maxY, maxZ);
+	ROS_INFO("Probability for occupied: %f", octomap->getOccupancyThres());
+
+	/* generate copy of octree, where:
+	 *   - space in the back is known free space --> set with itterator begin_leafs_bbx and setNodeValue
+	 *   - everything else is forced non-free if its occupancy probability is higher than l_low
+	 *   - publish this new map to the planning scene as in planningSceneUpdater.py
+	*/
+	
+	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
+	add_free_and_occupied(octomap);
+	//add_free_and_occupied_faster(octomap);
     
-    // Own tree iteration to set part of the map occupied
-    /* Pseudo code
-     * Stack<node> s
-     * s.push(octree->getRoot())
-     * 
-     * while !s.isEmpty():
-     * 		here = s.pop
-     * 		for k in here.children:
-     *			if k.completelyInsideGoalArea: --> node does not know its position nor size! (only iterators do), can be fixed by enhancing the stack element
-     * 				k.setFree()
-     * 			else if k.completelyOutsideGoalArea:
-     * 				k.setOccupied()
-     * 			else if k.partiallyInsideGoalArea:
-     * 				if k.onMaxDepth():
-     * 					k.setOccupied() // overapproximate occupied area
-     * 				else:
-     * 					s.push(k)
-     * */
-    
-    // Inspired by the iterator: https://github.com/OctoMap/octomap/blob/ebff3f0a53551ad6ccee73e6a09d1edda1916784/octomap/include/octomap/OcTreeIterator.hxx 
-    //struct StackElement{
-        //octomap::OcTreeNode* node;
-        //octomap::OcTreeKey key;
-        //uint8_t depth;
-    ////};
-	//std::stack<StackElement,std::vector<StackElement> > s;
-	//StackElement root;
-	//root.node = octomap->getRoot();
-	//root.depth = 0;
-	//root.key[0] = root.key[1] = root.key[2] = 32768; //octomap->tree_max_val; // 2^15 --> perfect in the middle, I guess
-	//s.push(root);
-	
-	//octomap->write("preModify.bt");
-	
-	//while(!s.empty()) {
-		//StackElement here = s.top();
-		//s.pop();
-		//ROS_INFO("Entering node with key %d, %d, %d", here.key.k[0], here.key.k[1], here.key.k[2]);
-		//StackElement tmp;
-		//tmp.depth = here.depth+1;
-		//float child_size = octomap->getNodeSize(tmp.depth);
-		
-		//if(here.depth<15) { // highest: 15
-			//octomap::key_type center_offset_key = 32768 >> tmp.depth;//octomap->tree_max_val >> tmp.depth;
-			//for(uint8_t i=0; i<8; ++i) {
-			//// Create all children if not deep enough
-				//if(!octomap->nodeChildExists(here.node, i)) {
-					//octomap->createNodeChild (here.node, i);
-				//}
-				//tmp.node = octomap->getNodeChild(here.node, i);
-				//octomap::computeChildKey(i, center_offset_key, here.key, tmp.key);
-				//// select children action
-				//octomap::point3d child_pos = octomap->keyToCoord(tmp.key, tmp.depth);
-				
-				//ROS_INFO("Looking at (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, tmp.depth); 
-				
-				//if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
-					//-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
-					//0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
-					//ROS_INFO("Is inside");
-					//octomap->setNodeValue(tmp.key, -2.0); // Node completly within goal area -> set free
-					//for(uint8_t j=0; j<8; ++j)
-						//if(octomap->nodeChildExists(tmp.node, j)) {
-							//ROS_INFO("Killed child %d", j);
-							//octomap->deleteNodeChild(tmp.node, j);
-						//}
-				//}
-					
-				//else if(-1. > child_pos.x()+child_size/2 || child_pos.x()-child_size/2 > 0.1 ||
-					//-1. > child_pos.y()+child_size/2 || child_pos.y()-child_size/2 > 1. ||
-					//0. > child_pos.z()+child_size/2 || child_pos.z()-child_size/2 > 1.5) {
-					//ROS_INFO("Is outside");
-					//continue; // ignore node complete outside goal area
-				//}
-				
-				//else {
-					//ROS_INFO("Is split");
-					//s.push(tmp); // neither completely in nor out --> must be further subdivided
-				//}
-					
- 			//}
-		//} else { // is lowest possible
-			//child_size*=2;
-			//octomap::point3d child_pos = octomap->keyToCoord(here.key, here.depth);
-			//ROS_INFO("Looking at Leaf (%f, %f, %f) with size %f in depth %d", child_pos.x(), child_pos.y(), child_pos.z(), child_size, here.depth); 
-			//if(-1. <= child_pos.x()-child_size/2 && child_pos.x()+child_size/2 <= 0.1 && 
-				//-1. <= child_pos.y()-child_size/2 && child_pos.y()+child_size/2 <= 1. && 
-				//0. <= child_pos.z()-child_size/2 && child_pos.z()+child_size/2 <= 1.5) {
-					//octomap->setNodeValue(here.key, -2.0); // Node completly within goal area -> set free
-					//ROS_INFO("Is inside");
-				//}
-		//}
-	//}
-	
-	//octomap->write("postModify.bt");
+    //octomap->write("postModify.bt");
 	octomap->updateInnerOccupancy();
 	octomap->prune(); // Compress after major changes have been applied
 	
 	//octomap->write("postPrune.bt");
 
-	/*
-	 * 	scene_update = PlanningScene()
-			scene_update.is_diff = True
-			scene_update.world.octomap.octomap = msg
-			scene_update.world.octomap.header.stamp = rospy.Time.now()
-			scene_update.world.octomap.header.frame_id = "world"
-			self.scene_pub = rospy.Publisher('/planning_scene', PlanningScene, queue_size=5)
-			self.scene_pub.publish(scene_update)
-	 * */
-	 moveit_msgs::PlanningScene updateMsg;
-	 octomap_msgs::Octomap newMapMsg;
-	 newMapMsg.header.frame_id = "world";
-	 //octomap->setOccupancyThres(0.15);
-	 //ROS_INFO("New threshold: %f", octomap->getOccupancyThres());
-	 //octomap_msgs::fullMapToMsg(*octomap, newMapMsg);
-	 octomap_msgs::binaryMapToMsg(*octomap, newMapMsg);
-	 octomap_publisher.publish(newMapMsg);
-	 //ROS_INFO("Generated update: %s", updateMsg);
-	 updateMsg.is_diff = true;
-	 updateMsg.world.octomap.octomap = newMapMsg;
-	 updateMsg.world.octomap.header.stamp = ros::Time::now();
-	 updateMsg.world.octomap.header.frame_id = "world";
-	 update_publisher.publish(updateMsg);
-	 ROS_INFO("Sent OctomapBinary message (size: %d bytes)", (int)newMapMsg.data.size());
+
+	 // Publish modified map
+	octomap_msgs::Octomap newMapMsg;
+	newMapMsg.header.frame_id = "world";
+	octomap_msgs::binaryMapToMsg(*octomap, newMapMsg);
+	octomap_publisher.publish(newMapMsg);
+	
+	// Publish modified map to planning scene
+	moveit_msgs::PlanningScene updateMsg;
+	updateMsg.is_diff = true;
+	updateMsg.world.octomap.octomap = newMapMsg;
+	updateMsg.world.octomap.header.stamp = ros::Time::now();
+	updateMsg.world.octomap.header.frame_id = "world";
+	update_publisher.publish(updateMsg);
+	ROS_INFO("Sent OctomapBinary message (size: %d bytes)", (int)newMapMsg.data.size());
 	 
 	 // free memory
 	 delete tree;
