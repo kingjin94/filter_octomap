@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(filter_octomap)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+#add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -158,6 +158,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(octomap_alter_unknown src/octomap_alter_unknown.cpp)
 add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
+add_executable(octomap_to_grid src/octomap_to_grid.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -169,12 +170,16 @@ add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 ## same as for the library above
 add_dependencies(octomap_alter_unknown ${catkin_LIBRARIES})
 add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
+add_dependencies(octomap_to_grid ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(octomap_alter_unknown
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_entropy_publisher
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(octomap_to_grid
   ${catkin_LIBRARIES}
 )
 
