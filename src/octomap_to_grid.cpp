@@ -38,6 +38,7 @@
 #include "std_msgs/Float64.h"
 #include <assert.h>
 #include <iostream>
+#include "filter_octomap/table.h"
 #define STEPS_X 75 // Right now we have 50 Steps / m
 #define STEPS_Y 150
 #define STEPS_Z 100
@@ -46,9 +47,7 @@
 #define START_Z 0 // in m
 #define STEP_SIZE 0.02 // Size of cells on lowest level
 
-ros::Publisher update_publisher;
-ros::Publisher octomap_publisher;
-ros::Publisher entropy_publisher;
+ros::Publisher tablePublisher;
 
 template <class T> class Array3D { // from: https://stackoverflow.com/questions/2178909/how-to-initialize-3d-array-in-c
     size_t m_width, m_height, m_here;
@@ -231,6 +230,16 @@ void findTable(Array3D<double>& map) {
 	octomath::Vector3 normal = octomath::Vector3(xy*yz - xz*yy, xy*xz - yz*xx, det_z);
 	normal.normalize();
 	std::cout << "Table normal: " << normal << "\n";
+	
+	filter_octomap::table table_msg;
+	table_msg.header.stamp = ros::Time::now();
+	table_msg.header.frame_id = "world";
+	table_msg.centroid_position.x = centroid.x(); table_msg.centroid_position.y = centroid.y(); table_msg.centroid_position.z = centroid.z();
+	table_msg.normal.x = normal.x(); table_msg.normal.y = normal.y(); table_msg.normal.z = normal.z(); 
+	table_msg.max.x = max_x; table_msg.max.y = max_y; table_msg.max.z = max_z; 
+	table_msg.min.x = min_x; table_msg.min.y = min_y; table_msg.min.z = min_z; 
+	table_msg.score = score;
+	tablePublisher.publish(table_msg);
 }
 
 void changeToGrid(octomap::OcTree* octomap, Array3D<double>& grid) {
@@ -327,55 +336,14 @@ int main(int argc, char **argv)
 	
 	//// terminate
 	//return 0;
-	
-  /**
-   * The ros::init() function needs to see argc and argv so that it can perform
-   * any ROS arguments and name remapping that were provided at the command line.
-   * For programmatic remappings you can use a different version of init() which takes
-   * remappings directly, but for most command-line programs, passing argc and argv is
-   * the easiest way to do it.  The third argument to init() is the name of the node.
-   *
-   * You must call one of the versions of ros::init() before using any other
-   * part of the ROS system.
-   */
-  ros::init(argc, argv, "findTable");
 
-  /**
-   * NodeHandle is the main access point to communications with the ROS system.
-   * The first NodeHandle constructed will fully initialize this node, and the last
-   * NodeHandle destructed will close down the node.
-   */
-  ros::NodeHandle n;
+	ros::init(argc, argv, "findTable");
+	ros::NodeHandle n;
 
-  /**
-   * The subscribe() call is how you tell ROS that you want to receive messages
-   * on a given topic.  This invokes a call to the ROS
-   * master node, which keeps a registry of who is publishing and who
-   * is subscribing.  Messages are passed to a callback function, here
-   * called chatterCallback.  subscribe() returns a Subscriber object that you
-   * must hold on to until you want to unsubscribe.  When all copies of the Subscriber
-   * object go out of scope, this callback will automatically be unsubscribed from
-   * this topic.
-   *
-   * The second parameter to the subscribe() function is the size of the message
-   * queue.  If messages are arriving faster than they are being processed, this
-   * is the number of messages that will be buffered up before beginning to throw
-   * away the oldest ones.
-   */
-// %Tag(SUBSCRIBER)%
-  ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
-// %EndTag(SUBSCRIBER)%
+	ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
+	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10);
 
-  /**
-   * ros::spin() will enter a loop, pumping callbacks.  With this version, all
-   * callbacks will be called from within this thread (the main one).  ros::spin()
-   * will exit when Ctrl-C is pressed, or the node is shutdown by the master.
-   */
-// %Tag(SPIN)%
-  ros::spin();
-// %EndTag(SPIN)%
-
-  return 0;
+	ros::spin();
+	return 0;
 }
-// %EndTag(FULLTEXT)%
 
