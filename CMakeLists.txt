@@ -159,6 +159,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 add_executable(octomap_alter_unknown src/octomap_alter_unknown.cpp)
 add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 add_executable(octomap_to_grid src/octomap_to_grid.cpp)
+add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -171,6 +172,7 @@ add_executable(octomap_to_grid src/octomap_to_grid.cpp)
 add_dependencies(octomap_alter_unknown ${catkin_LIBRARIES})
 add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
 add_dependencies(octomap_to_grid ${catkin_LIBRARIES})
+add_dependencies(octomap_generate_empty_start ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(octomap_alter_unknown
@@ -180,6 +182,9 @@ target_link_libraries(octomap_entropy_publisher
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_to_grid
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(octomap_generate_empty_start
   ${catkin_LIBRARIES}
 )
 
