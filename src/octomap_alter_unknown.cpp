@@ -272,7 +272,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	*/
 	
 	// WORKING VERSION TO TURN BACKSIDE OF ROBOT FREE
-	add_free_and_occupied(octomap);
+	//add_free_and_occupied(octomap); // not needed if one uses the prefilled map
 	//add_free_and_occupied_faster(octomap);
     
     //octomap->write("postModify.bt");
