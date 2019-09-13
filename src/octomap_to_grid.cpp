@@ -39,15 +39,34 @@
 #include <assert.h>
 #include <iostream>
 #include "filter_octomap/table.h"
-#define STEPS_X 75 // Right now we have 50 Steps / m
-#define STEPS_Y 150
-#define STEPS_Z 100
-#define START_X 0. // in m
-#define START_Y -1.5 // in m
-#define START_Z 0 // in m
-#define STEP_SIZE 0.02 // Size of cells on lowest level
+
+#define THRESHOLD_BELONG 0.2
+/* Debuging*/
+#define DEBUG 1
+#ifdef DEBUG
+	#include "visualization_msgs/Marker.h"
+	#include "geometry_msgs/Point.h"
+	#define STEPS_X 75 // Right now we have 50 Steps / m
+	#define STEPS_Y 100
+	#define STEPS_Z 50
+	#define START_X 0. // in m
+	#define START_Y -1. // in m
+	#define START_Z 0 // in m
+	#define STEP_SIZE 0.02 // Size of cells on lowest level
+#else
+	/*Deploy*/
+	#define STEPS_X 75 // Right now we have 50 Steps / m
+	#define STEPS_Y 150
+	#define STEPS_Z 100
+	#define START_X 0. // in m
+	#define START_Y -1.5 // in m
+	#define START_Z 0 // in m
+	#define STEP_SIZE 0.02 // Size of cells on lowest level
+#endif	
 
 ros::Publisher tablePublisher;
+ros::Publisher vis_pub;
+visualization_msgs::Marker table_marker;
 
 template <class T> class Array3D { // from: https://stackoverflow.com/questions/2178909/how-to-initialize-3d-array-in-c
     size_t m_width, m_height, m_here;
@@ -117,13 +136,17 @@ double generateTableMap(Array3D<double>& map, Array3D<double>& tableness, int& m
 	double maxTableness = -100000;
 	for(int i = 0; i < STEPS_X-4; i++) // over x
     {
-		//std::cout << "\nj     | i: ";
-		//std::cout << i;
-		//std::cout << "\n";
+		#ifdef DEBUG
+		std::cout << "\nj     | i: ";
+		std::cout << i;
+		std::cout << "\n";
+		#endif
 		for(int j = 0; j < STEPS_Y-4; j++) // over y
         {
-			//std::cout << std::setw(3) << j;
-			//std::cout << ": ";
+			#ifdef DEBUG
+			std::cout << std::setw(3) << j;
+			std::cout << ": ";
+			#endif
             for(int k = 0; k < STEPS_Z-4; k++) // over z
             {
 				tableness(i,j,k) = convolveOneTable(map, i+2, j+2, k+2);
@@ -133,10 +156,14 @@ double generateTableMap(Array3D<double>& map, Array3D<double>& tableness, int& m
 					max_j = j;
 					max_k = k;
 				}
-				//std::cout << tableness(i,j,k);
-				//std::cout << " ";
+				#ifdef DEBUG
+				std::cout << tableness(i,j,k);
+				std::cout << " ";
+				#endif
 			}
-			//std::cout << "\n";
+			#ifdef DEBUG
+			std::cout << "\n";
+			#endif
 		}
 	}
 	std::cout << "Best tableness (" << maxTableness << ") found at (" << max_i << "," << max_j << "," << max_k << ")\n";
@@ -153,28 +180,39 @@ void findTable(Array3D<double>& map) {
 	// Floodfill from best tableness to find all points making up the table
 	//bool explored[STEPS_X-4][STEPS_Y-4][STEPS_Z-4] = {}; // Pads with zero --> all false
 	Array3D<int> belongsToTable(STEPS_X-4, STEPS_Y-4, STEPS_Z-4, 0);
-	floodfill(tableness, max_i, max_j, max_k, belongsToTable, 0.5*maxTableness);
+	floodfill(tableness, max_i, max_j, max_k, belongsToTable, THRESHOLD_BELONG*maxTableness);
 	// Debug floodfill
-	//for(int i = 2; i < STEPS_X-2; i++) // over x
-    //{
-		//std::cout << "\nj     | i: ";
-		//std::cout << i;
-		//std::cout << "\n";
-		//for(int j = 2; j < STEPS_Y-2; j++) // over y
-        //{
-			//std::cout << std::setw(3) << j;
-			//std::cout << ": ";
-            //for(int k = 2; k < STEPS_Z-2; k++) // over z
-            //{
-				//if(belongsToTable(i-2,j-2,k-2)!=0) {
-					//std::cout << "+";
-				//}
-				//else
-					//std::cout << "-";
-			//}
-			//std::cout << "\n";
-		//}
-	//}
+	#ifdef DEBUG
+	int msg_index = 0;
+	for(int i = 2; i < STEPS_X-2; i++) // over x
+    {
+		std::cout << "\nj     | i: ";
+		std::cout << i;
+		std::cout << "\n";
+		for(int j = 2; j < STEPS_Y-2; j++) // over y
+        {
+			std::cout << std::setw(3) << j;
+			std::cout << ": ";
+            for(int k = 2; k < STEPS_Z-2; k++) // over z
+            {
+				if(belongsToTable(i-2,j-2,k-2)!=0) {
+					std::cout << "+";
+					// See http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Points%20and%20Lines
+					geometry_msgs::Point p;
+					p.x = START_X + i * STEP_SIZE;
+					p.y = START_Y + j * STEP_SIZE;
+					p.z = START_Z + k * STEP_SIZE;
+					table_marker.points.push_back(p);
+				}
+				else
+					std::cout << "-";
+			}
+			std::cout << "\n";
+		}
+	}
+	table_marker.header.stamp = ros::Time();
+	vis_pub.publish( table_marker );
+	#endif
 	
 	// Extract data about the table --> min / max in x,y,z; centroid; plane (normal + offset)
 	int N=0;
@@ -339,6 +377,28 @@ int main(int argc, char **argv)
 
 	ros::init(argc, argv, "findTable");
 	ros::NodeHandle n;
+	
+	#ifdef DEBUG
+	// see http://wiki.ros.org/rviz/DisplayTypes/Marker#Example_Usage_.28C.2B-.2B-.2BAC8-roscpp.29
+	vis_pub = n.advertise<visualization_msgs::Marker>( "debug/table_marker", 0 );
+	table_marker;
+	table_marker.header.frame_id = "world";
+    table_marker.ns = "my_namespace";
+    table_marker.id = 0;
+    table_marker.type = visualization_msgs::Marker::POINTS;
+    table_marker.action = visualization_msgs::Marker::ADD;
+	table_marker.pose.orientation.x = 0.0;
+	table_marker.pose.orientation.y = 0.0;
+	table_marker.pose.orientation.z = 0.0;
+	table_marker.pose.orientation.w = 1.0; 
+	table_marker.scale.x = 0.01;
+	table_marker.scale.y = 0.01;
+	table_marker.scale.z = 0.01;
+	table_marker.color.a = 1.0; // Don't forget to set the alpha!
+	table_marker.color.r = 0.0;
+	table_marker.color.g = 1.0;
+	table_marker.color.b = 0.0;
+	#endif
 
 	ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
 	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10);
@@ -346,4 +406,3 @@ int main(int argc, char **argv)
 	ros::spin();
 	return 0;
 }
-
