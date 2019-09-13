@@ -160,7 +160,6 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(octomap_alter_unknown src/octomap_alter_unknown.cpp)
 add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
-add_executable(octomap_to_grid src/octomap_to_grid.cpp)
 add_executable(octomap_to_table src/octomap_to_table.cpp)
 add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp)
 
@@ -174,7 +173,6 @@ add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp
 ## same as for the library above
 add_dependencies(octomap_alter_unknown ${catkin_LIBRARIES})
 add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
-add_dependencies(octomap_to_grid ${catkin_LIBRARIES})
 add_dependencies(octomap_to_table ${catkin_LIBRARIES})
 add_dependencies(octomap_generate_empty_start ${catkin_LIBRARIES})
 
@@ -183,9 +181,6 @@ target_link_libraries(octomap_alter_unknown
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_entropy_publisher
-  ${catkin_LIBRARIES}
-)
-target_link_libraries(octomap_to_grid
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_to_table
