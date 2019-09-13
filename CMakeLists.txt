@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 2.8.3)
 project(filter_octomap)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-#add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
+#set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address") # helps find stack overflow
+#set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -159,6 +161,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 add_executable(octomap_alter_unknown src/octomap_alter_unknown.cpp)
 add_executable(octomap_entropy_publisher src/octomap_entropy_publisher.cpp)
 add_executable(octomap_to_grid src/octomap_to_grid.cpp)
+add_executable(octomap_to_table src/octomap_to_table.cpp)
 add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp)
 
 ## Rename C++ executable without prefix
@@ -172,6 +175,7 @@ add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp
 add_dependencies(octomap_alter_unknown ${catkin_LIBRARIES})
 add_dependencies(octomap_entropy_publisher ${catkin_LIBRARIES})
 add_dependencies(octomap_to_grid ${catkin_LIBRARIES})
+add_dependencies(octomap_to_table ${catkin_LIBRARIES})
 add_dependencies(octomap_generate_empty_start ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
@@ -182,6 +186,9 @@ target_link_libraries(octomap_entropy_publisher
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_to_grid
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(octomap_to_table
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_generate_empty_start
