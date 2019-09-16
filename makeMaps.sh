@@ -1,3 +1,5 @@
+#!/bin/bash
+cd "$(dirname "$0")"
 mkdir maps
 cd maps
 source /home/catkin_ws/devel_isolated/setup.bash
