@@ -1,8 +1,6 @@
-# octomap_helper
+# filter_octomap
 One has to construct the prefilled maps first before using this package
 
-1.) Set desired resolution in src/octomap_generate_empty_start.cpp
-2.) catkin_make_isolated in catkin_ws
-3.) rosrun filter_ocotmap octomap_generate_empty_start
-4.) move resulting .ot file to filter_octomaps/maps/
-5.) add resulting map file to the enhanced_sim explorer.launch (where the octomap server node is started)
+1.) Default with 2 cm resolution is constructed with makeMaps.sh
+2.) For others replace the 0.02 with your desired resolution
+3.) For adapting the prefilled areas please change src/octomap_generate_empty_start.cpp

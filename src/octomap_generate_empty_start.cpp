@@ -33,24 +33,25 @@
 #include <octomap/OcTree.h>
 #include <octomap_msgs/conversions.h> // deserialize octreemsg withh msgToMap
 #include <math.h>
+#include <bits/stdc++.h>  // sting to float
 
-#define RESOLUTION 0.01
 #define LFREE -0.0872 // old -2.
 #define LOCCUPIED 0.0872 // old 3.5
 
 ros::Publisher update_publisher;
 ros::Publisher octomap_publisher;
 ros::Publisher entropy_publisher;
+float resolution;
 
 inline void add_free_and_occupied(octomap::OcTree* octomap) {
 	double total_weighted_H = 0;
-	for(float z = -0.1+RESOLUTION/2; z <= 1.5-RESOLUTION/2; z += RESOLUTION) // increment by resolution to hit all possible leafs
+	for(float z = -0.1+resolution/2; z <= 1.5-resolution/2; z += resolution) // increment by resolution to hit all possible leafs
     {
 		std::cout << "\r" << z << "                                          \n";
-        for(float y = -1.5+RESOLUTION/2; y <= 1.5-RESOLUTION/2; y += RESOLUTION)
+        for(float y = -1.5+resolution/2; y <= 1.5-resolution/2; y += resolution)
         {
 			std::cout << "\ry: " << y;
-            for(float x = -1.5+RESOLUTION/2; x <= 1.5-RESOLUTION/2; x += RESOLUTION)
+            for(float x = -1.5+resolution/2; x <= 1.5-resolution/2; x += resolution)
             {
                 if(-0.99 <= x && x <= 0.19 &&
                    -.99 <= y && y <= .99 && 
@@ -81,8 +82,16 @@ inline void add_free_and_occupied(octomap::OcTree* octomap) {
 
 int main(int argc, char **argv)
 {
+	ROS_INFO("You gave %d arguments", argc);
+	if(argc == 2) {
+		ROS_INFO("First (and only allowed) is resolution: %f", std::stof(argv[1])); 
+		resolution=std::stof(argv[1]);
+	} else {
+		ROS_INFO("Invalid call, give resolution");
+		return -1;
+	}
 	
-	octomap::OcTree* octomap = new octomap::OcTree(RESOLUTION);
+	octomap::OcTree* octomap = new octomap::OcTree(resolution);
 	//octomap::AbstractOcTree* tree = octomap::AbstractOcTree::read("/home/catkin_ws/test.ot");
 	//if (tree){
 		//octomap = dynamic_cast<octomap::OcTree*>(tree);
@@ -98,7 +107,7 @@ int main(int argc, char **argv)
 	// call processor
 	add_free_and_occupied(octomap);
 	std::ostringstream outName;
-	outName << "prefilled" << RESOLUTION << ".ot";
+	outName << "prefilled" << resolution << ".ot";
 	octomap->write(outName.str());
 	
 	delete octomap;
