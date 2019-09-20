@@ -43,7 +43,8 @@
 
 #define THRESHOLD_BELONG 0.2
 /* Debuging*/
-//#define DEBUG 1
+//#define DEBUG_COUT 1
+#define DEBUG 1
 #ifdef DEBUG
 	#include "visualization_msgs/Marker.h"
 	#include "geometry_msgs/Point.h"
@@ -120,7 +121,9 @@ inline double convolveOneTable(Array3D<double>& map, int x, int y, int z) {
 
 void floodfill(Array3D<double>& map, int x, int y, int z, Array3D<int>& explored, double threshold) {
 	// Marks all places in explored true which are above the threshold in map and are connected to the first x,y,z via 6-Neighbourhood
+	#ifdef DEBUG_COUT
 	std::cout << "Starting at " << x << "," << y << "," << z << "\n";
+	#endif
 	std::stack<std::tuple<int,int,int>> posToLookAt;
 	posToLookAt.emplace(x,y,z);
 	while(!posToLookAt.empty()) {
@@ -128,19 +131,66 @@ void floodfill(Array3D<double>& map, int x, int y, int z, Array3D<int>& explored
 		double x = std::get<0>(here);
 		double y = std::get<1>(here);
 		double z = std::get<2>(here);
+		#ifdef DEBUG_COUT
+		std::cout << "\nStack size: " << posToLookAt.size() << "\n";
 		std::cout << "Looking at " << x << "," << y << "," << z << "\n";
+		#endif
 		posToLookAt.pop();
-		if(explored(x,y,z)!=0) return;
+		if(explored(x,y,z)!=0) continue;
 		else {
 			explored(x,y,z) = 1;
-			//std::cout << "Is new; set to " << explored(x,y,z) << "; local value: " << map(x,y,z) << "\n";
+			#ifdef DEBUG_COUT
+			std::cout << "Is new; set to " << explored(x,y,z) << "; local tableness: " << map(x,y,z) << "\n";
+			#endif
 			// Test neighbours and call floodfill if tableness high enough
-			if(x>0 && map(x-1,y,z) > threshold) posToLookAt.emplace(x-1,y,z);//floodfill(map, x-1,y,z, explored, threshold);
-			if(y>0 && map(x,y-1,z) > threshold) posToLookAt.emplace(x,y-1,z);//floodfill(map, x,y-1,z, explored, threshold);
-			if(z>0 && map(x,y,z-1) > threshold) posToLookAt.emplace(x,y,z-1);//floodfill(map, x,y,z-1, explored, threshold);
-			if(x<STEPS_X-4-1 && map(x+1,y,z) > threshold) posToLookAt.emplace(x+1,y,z);//floodfill(map, x+1,y,z, explored, threshold);
-			if(y<STEPS_Y-4-1 && map(x,y+1,z) > threshold) posToLookAt.emplace(x,y+1,z);//floodfill(map, x,y+1,z, explored, threshold);
-			if(z<STEPS_Z-4-1 && map(x,y,z+1) > threshold) posToLookAt.emplace(x,y,z+1);//floodfill(map, x,y,z+1, explored, threshold);
+			if(x>0) {
+				if(map(x-1,y,z) > threshold) { 
+					posToLookAt.emplace(x-1,y,z); 
+					#ifdef DEBUG_COUT
+					std::cout << "-x inserted ";
+					#endif
+					}
+				}
+			if(y>0) {
+				if(map(x,y-1,z) > threshold) {
+					posToLookAt.emplace(x,y-1,z);
+					#ifdef DEBUG_COUT
+					std::cout << "-y inserted ";
+					#endif
+				}
+			}
+			if(z>0) {
+				if(map(x,y,z-1) > threshold) {
+					posToLookAt.emplace(x,y,z-1);
+					#ifdef DEBUG_COUT
+					std::cout << "-z inserted ";
+					#endif
+				}
+			}
+			if(x<STEPS_X-4-1) {
+				if(map(x+1,y,z) > threshold) {
+					posToLookAt.emplace(x+1,y,z);
+					#ifdef DEBUG_COUT
+					std::cout << "+x inserted ";
+					#endif
+				}
+			}
+			if(y<STEPS_Y-4-1) {
+				if(map(x,y+1,z) > threshold) {
+					posToLookAt.emplace(x,y+1,z);
+					#ifdef DEBUG_COUT
+					std::cout << "+y inserted ";
+					#endif
+				}
+			}
+			if(z<STEPS_Z-4-1) {
+				if(map(x,y,z+1) > threshold) { 
+					posToLookAt.emplace(x,y,z+1);
+					#ifdef DEBUG_COUT
+					std::cout << "+z inserted ";
+					#endif
+				}
+			}
 		}
 	}
 }
@@ -149,14 +199,14 @@ double generateTableMap(Array3D<double>& map, Array3D<double>& tableness, int& m
 	double maxTableness = -100000;
 	for(int i = 0; i < STEPS_X-4; i++) // over x
     {
-		#ifdef DEBUG
+		#ifdef DEBUG_COUT
 		std::cout << "\nj     | i: ";
 		std::cout << i;
 		std::cout << "\n";
 		#endif
 		for(int j = 0; j < STEPS_Y-4; j++) // over y
         {
-			#ifdef DEBUG
+			#ifdef DEBUG_COUT
 			std::cout << std::setw(3) << j;
 			std::cout << ": ";
 			#endif
@@ -169,12 +219,12 @@ double generateTableMap(Array3D<double>& map, Array3D<double>& tableness, int& m
 					max_j = j;
 					max_k = k;
 				}
-				#ifdef DEBUG
-				std::cout << tableness(i,j,k);
+				#ifdef DEBUG_COUT
+				std::cout << std::setw( 6 ) << std::setprecision( 4 ) << tableness(i,j,k);
 				std::cout << " ";
 				#endif
 			}
-			#ifdef DEBUG
+			#ifdef DEBUG_COUT
 			std::cout << "\n";
 			#endif
 		}
@@ -197,19 +247,26 @@ void findTable(Array3D<double>& map) {
 	// Debug floodfill
 	#ifdef DEBUG
 	int msg_index = 0;
+	table_marker.points.clear();
 	for(int i = 2; i < STEPS_X-2; i++) // over x
     {
+		#ifdef DEBUG_COUT
 		std::cout << "\nj     | i: ";
 		std::cout << i;
 		std::cout << "\n";
+		#endif
 		for(int j = 2; j < STEPS_Y-2; j++) // over y
         {
+			#ifdef DEBUG_COUT
 			std::cout << std::setw(3) << j;
 			std::cout << ": ";
+			#endif
             for(int k = 2; k < STEPS_Z-2; k++) // over z
             {
 				if(belongsToTable(i-2,j-2,k-2)!=0) {
+					#ifdef DEBUG_COUT
 					std::cout << "+";
+					#endif
 					// See http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Points%20and%20Lines
 					geometry_msgs::Point p;
 					p.x = START_X + i * STEP_SIZE;
@@ -217,10 +274,15 @@ void findTable(Array3D<double>& map) {
 					p.z = START_Z + k * STEP_SIZE;
 					table_marker.points.push_back(p);
 				}
-				else
+				else {
+					#ifdef DEBUG_COUT
 					std::cout << "-";
+					#endif
+				}
 			}
+			#ifdef DEBUG_COUT
 			std::cout << "\n";
+			#endif
 		}
 	}
 	table_marker.header.stamp = ros::Time();
@@ -413,6 +475,7 @@ int main(int argc, char **argv)
 	table_marker.color.r = 0.0;
 	table_marker.color.g = 1.0;
 	table_marker.color.b = 0.0;
+	table_marker.lifetime  = ros::Duration(10.);
 	#endif
 
 	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10);
