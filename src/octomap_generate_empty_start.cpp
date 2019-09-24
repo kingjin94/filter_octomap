@@ -35,15 +35,22 @@
 #include <math.h>
 #include <bits/stdc++.h>  // sting to float
 
+#include <octomap/ColorOcTree.h>
+
 #define LFREE -0.0872 // old -2.
 #define LOCCUPIED 0.0872 // old 3.5
+#define COLOR_OCTOMAP_SERVER 1
 
 ros::Publisher update_publisher;
 ros::Publisher octomap_publisher;
 ros::Publisher entropy_publisher;
 float resolution;
 
-inline void add_free_and_occupied(octomap::OcTree* octomap) {
+#ifdef COLOR_OCTOMAP_SERVER
+inline void add_free_and_occupied(octomap::ColorOcTree* octomap) {
+#else
+inline void add_free_and_occupied(octomap::OcTree* octomap) {	
+#endif
 	double total_weighted_H = 0;
 	for(float z = -0.1+resolution/2; z <= 1.5-resolution/2; z += resolution) // increment by resolution to hit all possible leafs
     {
@@ -62,12 +69,18 @@ inline void add_free_and_occupied(octomap::OcTree* octomap) {
 				else {
 					if(!octomap->search(x, y, z)) { // if place never initilized
 						octomap->setNodeValue(x, y, z, LOCCUPIED); 	// set occupied
+						#ifdef COLOR_OCTOMAP_SERVER
+						octomap->setNodeColor(x, y, z, 255, 255, 255);
+						#endif
 						total_weighted_H += -2*.5*std::log(.5); // unknown space
 					} else if(octomap->search(x, y, z)->getLogOdds() > -1.9) { // possible that occupied
 						double log_odd = octomap->search(x, y, z)->getLogOdds();
 						double p = std::exp(log_odd) / (1 + std::exp(log_odd));
 						total_weighted_H += -p*std::log(p) - (1-p)*std::log(1-p);
 						octomap->setNodeValue(x, y, z, LOCCUPIED); 	// set occupied
+						#ifdef COLOR_OCTOMAP_SERVER
+						octomap->setNodeColor(x, y, z, 255, 255, 255);
+						#endif
 					} else { // certainly free
 						total_weighted_H += 0.;
 					}
@@ -91,20 +104,11 @@ int main(int argc, char **argv)
 		return -1;
 	}
 	
+	#ifdef COLOR_OCTOMAP_SERVER
+	octomap::ColorOcTree* octomap = new octomap::ColorOcTree(resolution);
+	#else
 	octomap::OcTree* octomap = new octomap::OcTree(resolution);
-	//octomap::AbstractOcTree* tree = octomap::AbstractOcTree::read("/home/catkin_ws/test.ot");
-	//if (tree){
-		//octomap = dynamic_cast<octomap::OcTree*>(tree);
-		//if(!octomap){
-			//ROS_INFO("Wrong octomap type. Use a different display type.");
-			//return -1;
-		//}
-	//} else {
-		//ROS_INFO("Failed to deserialize octree message.");
-		//return -1;
-	//}
-
-	// call processor
+	#endif
 	add_free_and_occupied(octomap);
 	std::ostringstream outName;
 	outName << "prefilled" << resolution << ".ot";
