@@ -41,9 +41,14 @@
 
 #include <octomap/ColorOcTree.h>
 
+#define COLOR_OCTOMAP_SERVER 1
+
 ros::Publisher update_publisher;
 ros::Publisher octomap_publisher;
 ros::Publisher entropy_publisher;
+
+
+#ifdef COLOR_OCTOMAP_SERVER
 namespace octomap {
 class CopyOctree: public OcTree {
 	//private:
@@ -97,7 +102,9 @@ class CopyOctree: public OcTree {
 void updatePlanningScene(octomap::ColorOcTree* octomap) {
 	// Copy color map to normal one
 	octomap::OcTree* std_octomap = new octomap::CopyOctree(octomap);
-
+#else
+void updatePlanningScene(octomap::OcTree* std_octomap) {
+#endif
 	// Publish modified map
 	octomap_msgs::Octomap newMapMsg;
 	newMapMsg.header.frame_id = "world";
@@ -116,12 +123,21 @@ void updatePlanningScene(octomap::ColorOcTree* octomap) {
 	delete std_octomap;
 }
 
+#ifdef COLOR_OCTOMAP_SERVER
 void publishEntropy(const octomap::ColorOcTree* octomap) {
+#else
+void publishEntropy(const octomap::OcTree* octomap) {
+#endif
 	double total_v = 0;
 	double total_weighted_H = 0;
 	// Go over all leafs
+	#ifdef COLOR_OCTOMAP_SERVER
 	for(octomap::ColorOcTree::leaf_iterator it = octomap->begin_leafs(),
-       end=octomap->end_leafs(); it!= end; ++it)
+	   end=octomap->end_leafs(); it!= end; ++it)
+	#else
+	for(octomap::OcTree::leaf_iterator it = octomap->begin_leafs(),
+	   end=octomap->end_leafs(); it!= end; ++it)
+	#endif
 	{
 		//manipulate node, e.g.:
 		//std::cout << "Node center: " << it.getCoordinate() << std::endl;
@@ -154,17 +170,30 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 {
 	// Test if right message type
 	ROS_INFO("Received message number %d", msg->header.seq);
+	#ifdef COLOR_OCTOMAP_SERVER
 	if(!((msg->id == "OcTree")||(msg->id == "ColorOcTree"))) {
+	#else
+	if(!(msg->id == "OcTree")) {
+	#endif
 		ROS_INFO("Non supported octree type; found type:");
 		return;
 	}
 
 	// create octree from msg
+	
+	#ifdef COLOR_OCTOMAP_SERVER
 	octomap::ColorOcTree* octomap = NULL;
+	#else
+	octomap::OcTree* octomap = NULL;
+	#endif
 	octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
 
 	if (tree){
+		#ifdef COLOR_OCTOMAP_SERVER
 		octomap = dynamic_cast<octomap::ColorOcTree*>(tree);
+		#else
+		octomap = dynamic_cast<octomap::OcTree*>(tree);
+		#endif
 		if(!octomap){
 			ROS_INFO("Wrong octomap type. Use a different display type.");
 			return;
