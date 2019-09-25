@@ -41,6 +41,10 @@
 #include "filter_octomap/table.h"
 #include <assert.h>
 
+#include <octomap/ColorOcTree.h>
+
+#define COLOR_OCTOMAP_SERVER 1
+
 #define THRESHOLD_BELONG 0.2
 /* Debuging*/
 //#define DEBUG_COUT 1
@@ -354,8 +358,11 @@ void findTable(Array3D<double>& map) {
 	table_msg.score = score;
 	tablePublisher.publish(table_msg);
 }
-
+#ifdef COLOR_OCTOMAP_SERVER
+void changeToGrid(octomap::ColorOcTree* octomap, Array3D<double>& grid) {
+#else
 void changeToGrid(octomap::OcTree* octomap, Array3D<double>& grid) {
+#endif
 	int i; double x;
 	for(i=0, x=START_X; i < STEPS_X; i++, x += STEP_SIZE) // over x
     {
@@ -396,17 +403,29 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 {
 	// Test if right message type
 	ROS_INFO("Received message number %d", msg->header.seq);
+	#ifdef COLOR_OCTOMAP_SERVER
+	if(!((msg->id == "OcTree")||(msg->id == "ColorOcTree"))) {
+	#else
 	if(!(msg->id == "OcTree")) {
+	#endif
 		ROS_INFO("Non supported octree type");
 		return;
 	}
 
 	// creating octree
+	#ifdef COLOR_OCTOMAP_SERVER
+	octomap::ColorOcTree* octomap = NULL;
+	#else
 	octomap::OcTree* octomap = NULL;
+	#endif
 	octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
 
 	if (tree){
+		#ifdef COLOR_OCTOMAP_SERVER
+		octomap = dynamic_cast<octomap::ColorOcTree*>(tree);
+		#else
 		octomap = dynamic_cast<octomap::OcTree*>(tree);
+		#endif
 		if(!octomap){
 			ROS_INFO("Wrong octomap type. Use a different display type.");
 			return;
