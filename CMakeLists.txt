@@ -160,6 +160,7 @@ target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${OCTOMAP_LIBRARIES} ${
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(planningSceneUpdate_entropyCalc src/planningSceneUpdate_entropyCalc.cpp)
 add_executable(octomap_to_table src/octomap_to_table.cpp)
+add_executable(octomap_to_cans src/octomap_to_cans.cpp)
 add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp)
 
 ## Rename C++ executable without prefix
@@ -172,6 +173,7 @@ add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp
 ## same as for the library above
 add_dependencies(planningSceneUpdate_entropyCalc ${catkin_LIBRARIES})
 add_dependencies(octomap_to_table ${catkin_LIBRARIES})
+add_dependencies(octomap_to_cans ${catkin_LIBRARIES})
 add_dependencies(octomap_generate_empty_start ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
@@ -179,6 +181,9 @@ target_link_libraries(planningSceneUpdate_entropyCalc
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_to_table
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(octomap_to_cans
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_generate_empty_start
