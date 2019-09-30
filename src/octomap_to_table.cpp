@@ -476,7 +476,7 @@ int main(int argc, char **argv)
 	
 	#ifdef DEBUG
 	// see http://wiki.ros.org/rviz/DisplayTypes/Marker#Example_Usage_.28C.2B-.2B-.2BAC8-roscpp.29
-	vis_pub = n.advertise<visualization_msgs::Marker>( "debug/table_marker", 0 );
+	vis_pub = n.advertise<visualization_msgs::Marker>( "debug/table_marker", 0, true);
 	table_marker;
 	table_marker.header.frame_id = "world";
     table_marker.ns = "my_namespace";
@@ -497,7 +497,7 @@ int main(int argc, char **argv)
 	table_marker.lifetime  = ros::Duration(10.);
 	#endif
 
-	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10);
+	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10, true);
 	ROS_INFO("Node searching for table publisher done");
 	ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
 	ROS_INFO("Node searching for table sub done");

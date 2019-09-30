@@ -251,8 +251,8 @@ int main(int argc, char **argv)
 	ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
 // %EndTag(SUBSCRIBER)%
 	update_publisher = n.advertise<moveit_msgs::PlanningScene>("planning_scene", 10);
-	octomap_publisher = n.advertise<octomap_msgs::Octomap>("octomap_new", 10);
-	entropy_publisher = n.advertise<std_msgs::Float64>("octomap_new/entropy", 100);
+	octomap_publisher = n.advertise<octomap_msgs::Octomap>("octomap_new", 10, true); // latch topic
+	entropy_publisher = n.advertise<std_msgs::Float64>("octomap_new/entropy", 100, true); // latch topic
   /**
    * ros::spin() will enter a loop, pumping callbacks.  With this version, all
    * callbacks will be called from within this thread (the main one).  ros::spin()
