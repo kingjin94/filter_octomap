@@ -35,42 +35,44 @@
 #include <math.h>
 #include "moveit_msgs/PlanningScene.h"
 #include <stack> 
+#include <unordered_map>
 #include "std_msgs/Float64.h"
 #include <assert.h>
 #include <iostream>
 #include "filter_octomap/table.h"
+#include "filter_octomap/can.h"
 #include <assert.h>
 
 #include <octomap/ColorOcTree.h>
 
-#define THRESHOLD_BELONG 0.2
+#define THRESHOLD_CAN 255.5
 /* Debuging*/
-#define DEBUG_COUT 1
+//#define DEBUG_COUT 1
 #define DEBUG 1
 #ifdef DEBUG
 	#include "visualization_msgs/Marker.h"
 	#include "geometry_msgs/Point.h"
-	#define STEPS_X 75 // Right now we have 50 Steps / m
-	#define STEPS_Y 100
-	#define STEPS_Z 50
-	#define START_X 0. // in m
-	#define START_Y -1. // in m
-	#define START_Z 0 // in m
 	#define STEP_SIZE 0.02 // Size of cells on lowest level
 	ros::Publisher vis_pub;
 	visualization_msgs::Marker table_marker;
+	float START_X, START_Y, START_Z;
 #else
 	/*Deploy*/
-	#define STEPS_X 75 // Right now we have 50 Steps / m
-	#define STEPS_Y 150
-	#define STEPS_Z 100
-	#define START_X 0. // in m
-	#define START_Y -1.5 // in m
-	#define START_Z 0 // in m
 	#define STEP_SIZE 0.02 // Size of cells on lowest level
 #endif	
 
-ros::Publisher tablePublisher;
+ros::Publisher canPublisher;
+
+struct Index3D {
+	size_t x; size_t y; size_t z;
+	
+	Index3D(size_t x, size_t y, size_t z) // Explicit ctor to use emplace
+        : x(x), y(y), z(z) 
+    {}
+};
+typedef Index3D VoxelIndex;
+typedef Index3D Size3D;
+typedef std::unordered_map<VoxelIndex, double> VoxelindexToScore;
 
 template <class T> class Array3D { // from: https://stackoverflow.com/questions/2178909/how-to-initialize-3d-array-in-c
     size_t m_width, m_height, m_here, m_size;
@@ -79,12 +81,18 @@ template <class T> class Array3D { // from: https://stackoverflow.com/questions/
     Array3D(size_t x, size_t y, size_t z, T init = 0):
       m_width(x), m_height(y), m_data(x*y*z, init), m_here(0), m_size(x*y*z)
     {}
+    Array3D(Size3D size, T init = 0):
+      Array3D(size.x, size.y, size.z, init)
+    {}
     T& operator()(size_t x, size_t y, size_t z) {
 		assert(x < m_width);
 		assert(y < m_height);
 		assert(x*y*z < m_size);
         return m_data.at(x + y * m_width + z * m_width * m_height);
     }
+    T& operator ()(Index3D i) {
+		return (*this)(i.x, i.y, i.z);
+	}
     T& operator()(size_t index) {
 		return m_data.at(index);
 	}
@@ -98,76 +106,74 @@ template <class T> class Array3D { // from: https://stackoverflow.com/questions/
 	}
 };
 
-typedef Array3D<std::tuple<double, u_int8_t, u_int8_t, u_int8_t>> RGBVoxelgrid; // Each voxel with occupancy probability and RGB color channels
+typedef std::tuple<double, u_int8_t, u_int8_t, u_int8_t> RGBVoxel;
+typedef Array3D<RGBVoxel> RGBVoxelgrid; // Each voxel with occupancy probability and RGB color channels
 typedef Array3D<float> ScoreVoxelgrid;
 
-void floodfill(Array3D<float>& map, int x, int y, int z, Array3D<int>& explored, double threshold) {
+void floodfill(ScoreVoxelgrid& map, VoxelIndex start, Array3D<u_int8_t>& explored, double threshold, Size3D size) {
 	// Marks all places in explored true which are above the threshold in map and are connected to the first x,y,z via 6-Neighbourhood
 	#ifdef DEBUG_COUT
-	std::cout << "Starting at " << x << "," << y << "," << z << "\n";
+	std::cout << "Starting at " << start.x << "," << start.y << "," << start.z << "\n";
 	#endif
-	std::stack<std::tuple<int,int,int>> posToLookAt;
-	posToLookAt.emplace(x,y,z);
+	std::stack<VoxelIndex> posToLookAt;
+	posToLookAt.emplace(start);
 	while(!posToLookAt.empty()) {
-		std::tuple<int,int,int> here = posToLookAt.top();
-		double x = std::get<0>(here);
-		double y = std::get<1>(here);
-		double z = std::get<2>(here);
+		VoxelIndex here = posToLookAt.top();
 		#ifdef DEBUG_COUT
 		std::cout << "\nStack size: " << posToLookAt.size() << "\n";
-		std::cout << "Looking at " << x << "," << y << "," << z << "\n";
+		std::cout << "Looking at " << here.x << "," << here.y << "," << here.z << "\n";
 		#endif
 		posToLookAt.pop();
-		if(explored(x,y,z)!=0) continue;
+		if(explored(here)!=0) continue;
 		else {
-			explored(x,y,z) = 1;
+			explored(here) = 1;
 			#ifdef DEBUG_COUT
-			std::cout << "Is new; set to " << explored(x,y,z) << "; local tableness: " << map(x,y,z) << "\n";
+			std::cout << "Is new; set to " << explored(here) << "; local tableness: " << map(here) << "\n";
 			#endif
 			// Test neighbours and call floodfill if tableness high enough
-			if(x>0) {
-				if(map(x-1,y,z) > threshold) { 
-					posToLookAt.emplace(x-1,y,z); 
+			if(here.x>0) {
+				if(map(here.x-1,here.y,here.z) > threshold) { 
+					posToLookAt.emplace(here.x-1,here.y,here.z); 
 					#ifdef DEBUG_COUT
 					std::cout << "-x inserted ";
 					#endif
 					}
 				}
-			if(y>0) {
-				if(map(x,y-1,z) > threshold) {
-					posToLookAt.emplace(x,y-1,z);
+			if(here.y>0) {
+				if(map(here.x,here.y-1,here.z) > threshold) {
+					posToLookAt.emplace(here.x,here.y-1,here.z);
 					#ifdef DEBUG_COUT
 					std::cout << "-y inserted ";
 					#endif
 				}
 			}
-			if(z>0) {
-				if(map(x,y,z-1) > threshold) {
-					posToLookAt.emplace(x,y,z-1);
+			if(here.z>0) {
+				if(map(here.x,here.y,here.z-1) > threshold) {
+					posToLookAt.emplace(here.x,here.y,here.z-1);
 					#ifdef DEBUG_COUT
 					std::cout << "-z inserted ";
 					#endif
 				}
 			}
-			if(x<STEPS_X-4-1) {
-				if(map(x+1,y,z) > threshold) {
-					posToLookAt.emplace(x+1,y,z);
+			if(here.x<size.x-1) {
+				if(map(here.x+1,here.y,here.z) > threshold) {
+					posToLookAt.emplace(here.x+1,here.y,here.z);
 					#ifdef DEBUG_COUT
 					std::cout << "+x inserted ";
 					#endif
 				}
 			}
-			if(y<STEPS_Y-4-1) {
-				if(map(x,y+1,z) > threshold) {
-					posToLookAt.emplace(x,y+1,z);
+			if(here.y<size.y-1) {
+				if(map(here.x,here.y+1,here.z) > threshold) {
+					posToLookAt.emplace(here.x,here.y+1,here.z);
 					#ifdef DEBUG_COUT
 					std::cout << "+y inserted ";
 					#endif
 				}
 			}
-			if(z<STEPS_Z-4-1) {
-				if(map(x,y,z+1) > threshold) { 
-					posToLookAt.emplace(x,y,z+1);
+			if(here.z<size.z-1) {
+				if(map(here.x,here.y,here.z+1) > threshold) { 
+					posToLookAt.emplace(here.x,here.y,here.z+1);
 					#ifdef DEBUG_COUT
 					std::cout << "+z inserted ";
 					#endif
@@ -177,30 +183,40 @@ void floodfill(Array3D<float>& map, int x, int y, int z, Array3D<int>& explored,
 	}
 }
 
-inline double canScore(RGBVoxelgrid& map, size_t x, size_t y, size_t z) {
-	return (std::get<0>(map(x,y,z))+2.5) * // 0 if free, max if certainly occupied
-		(1.*std::get<1>(map(x,y,z))+ 		// R as big as possible
-		255.-1.*std::get<2>(map(x,y,z)));	// G as small as possible
+inline double canScore(RGBVoxelgrid& map, VoxelIndex i) {
+	return (std::get<0>(map(i))+2.5) * // 0 if free, max if certainly occupied
+		(1.*std::get<1>(map(i))+ 		// R as big as possible
+		255.-1.*std::get<2>(map(i)));	// G as small as possible
 		// B not used and ignored
 }
 
-void generateCanMap(RGBVoxelgrid& map, ScoreVoxelgrid& canness, size_t size_x, size_t size_y, size_t size_z) {
-	for(int i = 0; i < size_x; i++) // over x
+void generateCanMap(RGBVoxelgrid& map, ScoreVoxelgrid& canness, Size3D& size, VoxelIndex& max) {
+	double best_score = -1.;
+	for(size_t i = 0; i < size.x; i++) // over x
     {
 		#ifdef DEBUG_COUT
 		std::cout << "\nj     | i: ";
 		std::cout << i;
 		std::cout << "\n";
 		#endif
-		for(int j = 0; j < size_y; j++) // over y
+		for(size_t j = 0; j < size.y; j++) // over y
         {
 			#ifdef DEBUG_COUT
 			std::cout << std::setw(3) << j;
 			std::cout << ": ";
 			#endif
-            for(int k = 0; k < size_z; k++) // over z
+			canness(i,j,0) = 0.;
+			#ifdef DEBUG_COUT
+			std::cout << std::setw( 6 ) << std::setprecision( 4 ) << canness(i,j,0);
+			std::cout << " ";
+			#endif
+            for(size_t k = 1; k < size.z; k++) // over z
             {
-				canness(i,j,k) = canScore(map, i, j, k);
+				canness(i,j,k) = canScore(map, {i,j,k});
+				if(canness(i,j,k) > best_score) {
+					best_score = canness(i,j,k);
+					max.x = i; max.y = j; max.z = k; 
+				}
 				#ifdef DEBUG_COUT
 				std::cout << std::setw( 6 ) << std::setprecision( 4 ) << canness(i,j,k);
 				std::cout << " ";
@@ -224,143 +240,136 @@ void generateCanMap(RGBVoxelgrid& map, ScoreVoxelgrid& canness, size_t size_x, s
  * 
  * */ 
  
-void findCans(RGBVoxelgrid& map, size_t size_x, size_t size_y, size_t size_z) {
+void findCans(RGBVoxelgrid& map, Size3D size) {
 	// Where in map could tables be?
 	//double tableness[STEPS_X-4][STEPS_Y-4][STEPS_Z-4];
-	ScoreVoxelgrid canness(size_x, size_y, size_z);
-	//int max_i = 0, max_j = 0, max_k = 0;
-	generateCanMap(map, canness, size_x, size_y, size_z);
+	ScoreVoxelgrid canness(size);
+	VoxelIndex max = {0,0,0};
+	generateCanMap(map, canness, size, max);
+	std::cout << "Best match at " << max.x << "," << max.y << "," << max.z << std::endl;
 	
 	// Floodfill from best tableness to find all points making up the table
-	//bool explored[STEPS_X-4][STEPS_Y-4][STEPS_Z-4] = {}; // Pads with zero --> all false
-	//RGBVoxelgrid belongsToTable(STEPS_X-4, STEPS_Y-4, STEPS_Z-4, 0);
-	//floodfill(tableness, max_i, max_j, max_k, belongsToTable, THRESHOLD_BELONG*maxTableness);
+	Array3D<u_int8_t> belongsToCan(size);
+	floodfill(canness, max, belongsToCan, THRESHOLD_CAN, size);
 	//// Debug floodfill
-	//#ifdef DEBUG
-	//int msg_index = 0;
+	#ifdef DEBUG
 	//table_marker.points.clear();
-	//for(int i = 2; i < STEPS_X-2; i++) // over x
-    //{
-		//#ifdef DEBUG_COUT
-		//std::cout << "\nj     | i: ";
-		//std::cout << i;
-		//std::cout << "\n";
-		//#endif
-		//for(int j = 2; j < STEPS_Y-2; j++) // over y
-        //{
-			//#ifdef DEBUG_COUT
-			//std::cout << std::setw(3) << j;
-			//std::cout << ": ";
-			//#endif
-            //for(int k = 2; k < STEPS_Z-2; k++) // over z
-            //{
-				//if(belongsToTable(i-2,j-2,k-2)!=0) {
-					//#ifdef DEBUG_COUT
-					//std::cout << "+";
-					//#endif
-					//// See http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Points%20and%20Lines
+	for(int i = 0; i < size.x; i++) // over x
+    {
+		#ifdef DEBUG_COUT
+		std::cout << "\nj     | i: ";
+		std::cout << i;
+		std::cout << "\n";
+		#endif
+		for(int j = 0; j < size.y; j++) // over y
+        {
+			#ifdef DEBUG_COUT
+			std::cout << std::setw(3) << j;
+			std::cout << ": ";
+			#endif
+            for(int k = 0; k < size.z; k++) // over z
+            {
+				if(belongsToCan(i,j,k)) {
+					#ifdef DEBUG_COUT
+					std::cout << "+";
+					#endif
+					// See http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Points%20and%20Lines
 					//geometry_msgs::Point p;
 					//p.x = START_X + i * STEP_SIZE;
 					//p.y = START_Y + j * STEP_SIZE;
 					//p.z = START_Z + k * STEP_SIZE;
 					//table_marker.points.push_back(p);
-				//}
-				//else {
-					//#ifdef DEBUG_COUT
-					//std::cout << "-";
-					//#endif
-				//}
-			//}
-			//#ifdef DEBUG_COUT
-			//std::cout << "\n";
-			//#endif
-		//}
-	//}
-	//table_marker.header.stamp = ros::Time();
-	//vis_pub.publish( table_marker );
-	//#endif
+				}
+				else {
+					#ifdef DEBUG_COUT
+					std::cout << "-";
+					#endif
+				}
+			}
+			#ifdef DEBUG_COUT
+			std::cout << "\n";
+			#endif
+		}
+	}
+	#endif
 	
-	//// Extract data about the table --> min / max in x,y,z; centroid; plane (normal + offset)
-	//int N=0;
-	//octomath::Vector3 centroid(0.,0.,0.);
-	//double min_x=1000, max_x=-1000, min_y=1000, max_y=-1000, min_z=1000, max_z=-1000;
-	//std::vector<octomath::Vector3>* pointsOnTable = new std::vector<octomath::Vector3>;
-	//double score = 0;
+	// Extract data about the table --> min / max in x,y,z; centroid; plane (normal + offset)
+	int N=0;
+	octomath::Vector3 centroid(0.,0.,0.);
+	double min_x=1000, max_x=-1000, min_y=1000, max_y=-1000, min_z=1000, max_z=-1000;
+	std::vector<octomath::Vector3>* pointsOnCan = new std::vector<octomath::Vector3>;
+	double score = 0;
 
-	//for(int i = 2; i < STEPS_X-2; i++) // over x
-    //{
-		//double x = START_X+STEP_SIZE*i;
-		//for(int j = 2; j < STEPS_Y-2; j++) // over y
-        //{
-			//double y = START_Y+STEP_SIZE*j;
-            //for(int k = 2; k < STEPS_Z-2; k++) // over z
-            //{
-				//double z = START_Z+STEP_SIZE*k;
-				//if(belongsToTable(i-2,j-2,k-2)!=0) {
-					//octomath::Vector3 here(x,y,z);
-					//N++;
-					//centroid+=here;
-					//if(x < min_x) min_x = x;
-					//if(y < min_y) min_y = y;
-					//if(z < min_z) min_z = z;
-					//if(x > max_x) max_x = x;
-					//if(y > max_y) max_y = y;
-					//if(z > max_z) max_z = z;
-					//pointsOnTable->push_back(octomath::Vector3(x,y,z));
-					//score += tableness(i-2,j-2,k-2);
-				//}
-			//}
-		//}
-	//}
-	//centroid/=N;
-	//std::cout << "Found " << N << " table points\n";
-	//std::cout << "Table middle at: " << centroid << "\n";
-	//std::cout << "Minima: (" << min_x << "," << min_y << "," << min_z << "); maxima: ("
-				//<< max_x << "," << max_y << "," << max_z << ")\n"; 
-	//std::cout << "Table score: " << score << "\n";
-				
-	//// plane fitting, assuming n_z = 1 (should be the case for a table), see: https://www.ilikebigbits.com/2015_03_04_plane_from_points.html
-	//double xx=0, xy=0, xz=0, yy=0, yz=0, zz=0;
-	//for(std::size_t i=0; i<pointsOnTable->size(); ++i) {
-		//octomath::Vector3 r = pointsOnTable->at(i) - centroid;
-		//xx += r.x() * r.x();
-		//xy += r.x() * r.y();
-		//xz += r.x() * r.z();
-		//yy += r.y() * r.y();
-		//yz += r.y() * r.z();
-		//zz += r.z() * r.z();
-	//}
-	//double det_z = xx*yy - xy*xy;
-	//octomath::Vector3 normal = octomath::Vector3(xy*yz - xz*yy, xy*xz - yz*xx, det_z);
-	//normal.normalize();
-	//std::cout << "Table normal: " << normal << "\n";
+	for(int i = 0; i < size.x; i++) // over x
+    {
+		double x = START_X+STEP_SIZE*(i-0.5);
+		for(int j = 0; j < size.y; j++) // over y
+        {
+			double y = START_Y+STEP_SIZE*(j-0.5); // To shift it into the middle of a vertex
+            for(int k = 0; k < size.z; k++) // over z
+            {
+				double z = START_Z+STEP_SIZE*(k-0.5);
+				if(belongsToCan(i,j,k)!=0) {
+					octomath::Vector3 here(x,y,z);
+					N++;
+					centroid+=here;
+					if(x < min_x) min_x = x;
+					if(y < min_y) min_y = y;
+					if(z < min_z) min_z = z;
+					if(x > max_x) max_x = x;
+					if(y > max_y) max_y = y;
+					if(z > max_z) max_z = z;
+					pointsOnCan->push_back(octomath::Vector3(x,y,z));
+					score += canness(i,j,k);
+				}
+			}
+		}
+	}
+	centroid/=N;
+	std::cout << "Found " << N << " can points\n";
+	std::cout << "Can middle at: " << centroid << "\n";
+	std::cout << "Minima: (" << min_x << "," << min_y << "," << min_z << "); maxima: ("
+				<< max_x << "," << max_y << "," << max_z << ")\n"; 
+	std::cout << "Can score: " << score << "\n";
 	
-	//filter_octomap::table table_msg;
-	//table_msg.header.stamp = ros::Time::now();
-	//table_msg.header.frame_id = "world";
-	//table_msg.centroid_position.x = centroid.x(); table_msg.centroid_position.y = centroid.y(); table_msg.centroid_position.z = centroid.z();
-	//table_msg.normal.x = normal.x(); table_msg.normal.y = normal.y(); table_msg.normal.z = normal.z(); 
-	//table_msg.max.x = max_x; table_msg.max.y = max_y; table_msg.max.z = max_z; 
-	//table_msg.min.x = min_x; table_msg.min.y = min_y; table_msg.min.z = min_z; 
-	//table_msg.score = score;
-	//tablePublisher.publish(table_msg);
+	table_marker.scale.x = max_y-min_y;
+	table_marker.scale.y = max_y-min_y;
+	table_marker.scale.z = max_z-START_Z;
+	table_marker.pose.position.x = centroid.x();
+	table_marker.pose.position.y = centroid.y();
+	table_marker.pose.position.z = centroid.z();
+	table_marker.header.stamp = ros::Time();
+	vis_pub.publish( table_marker );
+	
+	filter_octomap::can can_msg;
+	can_msg.header.stamp = ros::Time::now();
+	can_msg.header.frame_id = "world";
+	can_msg.centroid_position.x = centroid.x(); can_msg.centroid_position.y = centroid.y(); can_msg.centroid_position.z = centroid.z();
+	can_msg.height = max_z-START_Z;
+	can_msg.radius = (max_y-min_y)/2.0;
+	can_msg.score = score;
+	canPublisher.publish(can_msg);
 }
 
 void changeToGrid(octomap::ColorOcTree* octomap, RGBVoxelgrid& grid, 
-				float x_min, float x_max, float y_min, float y_max, float z_min, float z_max) {
+				octomath::Vector3 min, octomath::Vector3 max) {
 	int i; double x;
-	for(i=0, x=x_min; x < x_max; i++, x += STEP_SIZE) // over x
+	for(i=0, x=min.x(); x < max.x(); i++, x += STEP_SIZE) // over x
     {
-		//std::cout << "\ny     | x: ";
-		//std::cout << x;
-		//std::cout << "\n";
+		#ifdef DEBUG_COUT
+		std::cout << "\ny     | x: ";
+		std::cout << x;
+		std::cout << "\n";
+		#endif
 		int j; double y;
-        for(j=0, y=y_min; y < y_max; j++, y+= STEP_SIZE) // over y
-        {			
-			//std::cout << std::setw(6) << y;
-			//std::cout << ": ";
+        for(j=0, y=min.y(); y < max.y(); j++, y+= STEP_SIZE) // over y
+        {		
+			#ifdef DEBUG_COUT	
+			std::cout << std::setw(6) << y;
+			std::cout << ": ";
+			#endif
 			int k; double z;
-            for(k=0, z=z_min; z < z_max; k++, z+= STEP_SIZE) // over z
+            for(k=0, z=min.z(); z < max.z(); k++, z+= STEP_SIZE) // over z
             {
 				if(!octomap->search(x, y, z)) { // if place never initilized
 					grid(i,j,k) = std::make_tuple(0., 0, 0, 0); // don't know anything
@@ -370,19 +379,23 @@ void changeToGrid(octomap::ColorOcTree* octomap, RGBVoxelgrid& grid,
 												octomap->search(x, y, z)->getColor().g,
 												octomap->search(x, y, z)->getColor().b);
 				}
-				//if(std::get<0>(grid(i,j,k)) < 1.)
-					//std::cout << "o";
-				//else if(std::get<1>(grid(i,j,k)) > 128 && std::get<2>(grid(i,j,k)) < 20)
-					//std::cout << "r";
-				//else if(std::get<1>(grid(i,j,k)) < 20 && std::get<2>(grid(i,j,k)) > 128)
-					//std::cout << "g";
-				//else if(std::get<1>(grid(i,j,k)) >> 20 && std::get<2>(grid(i,j,k)) > 20)
-					//std::cout << "y";
-				//else 
-					//std::cout << "o";
-				//std::cout << " ";
+				#ifdef DEBUG_COUT
+				if(std::get<0>(grid(i,j,k)) < 1.)
+					std::cout << "o";
+				else if(std::get<1>(grid(i,j,k)) > 128 && std::get<2>(grid(i,j,k)) < 20)
+					std::cout << "r";
+				else if(std::get<1>(grid(i,j,k)) < 20 && std::get<2>(grid(i,j,k)) > 128)
+					std::cout << "g";
+				else if(std::get<1>(grid(i,j,k)) >> 20 && std::get<2>(grid(i,j,k)) > 20)
+					std::cout << "y";
+				else 
+					std::cout << "o";
+				std::cout << " ";
+				#endif
             }
-            //std::cout << "\n";
+            #ifdef DEBUG_COUT
+            std::cout << "\n";
+            #endif
         }
     }
 }
@@ -416,14 +429,27 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	}
 
 	ros::NodeHandle n;
+	ROS_INFO("Waiting for touched table message");
 	auto table_msg = ros::topic::waitForMessage<filter_octomap::table>("/octomap_new/table_touched");
 	size_t size_x = std::ceil((table_msg->max.x - table_msg->min.x) / STEP_SIZE ) + 1;
 	size_t size_y = std::ceil((table_msg->max.y - table_msg->min.y) / STEP_SIZE ) + 1;
 	size_t size_z = std::ceil(0.4 / STEP_SIZE ) + 1; // search volume 40 cm above table
+	Size3D size = {size_x, size_y, size_z};
+	
+	
+	#ifdef DEBUG
+	START_X = table_msg->min.x;
+	START_Y = table_msg->min.y;
+	START_Z = table_msg->max.z;
+	#endif
 
-	RGBVoxelgrid grid(size_x,size_y,size_z,std::make_tuple(0., 0, 0, 0));
-	changeToGrid(octomap, grid, table_msg->min.x, table_msg->max.x, table_msg->min.y, table_msg->max.y, table_msg->max.z, table_msg->max.z+0.4);
-    findCans(grid, size_x, size_y, size_z);
+	RGBVoxelgrid grid(size, std::make_tuple(0., 0, 0, 0));
+	octomath::Vector3 lower_vertex(table_msg->min.x,table_msg->min.y,table_msg->max.z); // Define boundary of cube to search in
+	octomath::Vector3 upper_vertex(table_msg->max.x,table_msg->max.y,table_msg->max.z+0.4);
+	
+	changeToGrid(octomap, grid, lower_vertex, upper_vertex);
+	ROS_INFO("Octomap converted to voxel-grid");
+    findCans(grid, size);
 
 	// free memory
 	delete tree;
@@ -432,19 +458,19 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 
 int main(int argc, char **argv)
 {
-	ros::init(argc, argv, "findTable");
+	ros::init(argc, argv, "findCan");
 	ros::NodeHandle n;
 	
-	ROS_INFO("Node searching for table init");
+	ROS_INFO("Node searching for can init");
 	
 	#ifdef DEBUG
 	// see http://wiki.ros.org/rviz/DisplayTypes/Marker#Example_Usage_.28C.2B-.2B-.2BAC8-roscpp.29
-	vis_pub = n.advertise<visualization_msgs::Marker>( "debug/table_marker", 0 );
+	vis_pub = n.advertise<visualization_msgs::Marker>( "debug/can_marker", 0 );
 	table_marker;
 	table_marker.header.frame_id = "world";
     table_marker.ns = "my_namespace";
     table_marker.id = 0;
-    table_marker.type = visualization_msgs::Marker::POINTS;
+    table_marker.type = visualization_msgs::Marker::CYLINDER;
     table_marker.action = visualization_msgs::Marker::ADD;
 	table_marker.pose.orientation.x = 0.0;
 	table_marker.pose.orientation.y = 0.0;
@@ -454,16 +480,16 @@ int main(int argc, char **argv)
 	table_marker.scale.y = 0.01;
 	table_marker.scale.z = 0.01;
 	table_marker.color.a = 1.0; // Don't forget to set the alpha!
-	table_marker.color.r = 0.0;
-	table_marker.color.g = 1.0;
+	table_marker.color.r = 1.0;
+	table_marker.color.g = 0.0;
 	table_marker.color.b = 0.0;
 	table_marker.lifetime  = ros::Duration(10.);
 	#endif
 
-	tablePublisher = n.advertise<filter_octomap::table>("octomap_new/table", 10);
-	ROS_INFO("Node searching for table publisher done");
+	canPublisher = n.advertise<filter_octomap::can>("octomap_new/can", 10);
+	ROS_INFO("Node searching for can publisher done");
 	ros::Subscriber sub = n.subscribe("/octomap_full", 10, chatterCallback);
-	ROS_INFO("Node searching for table sub done");
+	ROS_INFO("Node searching for can sub done");
 	
 	ros::spin();
 	return 0;
