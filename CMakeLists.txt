@@ -58,6 +58,7 @@ find_package(Boost REQUIRED COMPONENTS thread )
  add_message_files(
    FILES
    table.msg
+   can.msg
  )
 
 ## Generate services in the 'srv' folder
