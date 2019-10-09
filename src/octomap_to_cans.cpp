@@ -36,6 +36,7 @@
 #include "moveit_msgs/PlanningScene.h"
 #include <stack> 
 #include <unordered_map>
+#include <unordered_set>
 #include "std_msgs/Float64.h"
 #include <assert.h>
 #include <iostream>
@@ -45,8 +46,26 @@
 #include <assert.h>
 
 #include <octomap/ColorOcTree.h>
+#include <pcl/ModelCoefficients.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/visualization/cloud_viewer.h>
 
-#define THRESHOLD_CAN 255.5
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+
+typedef pcl::PointXYZ PointT;
+
+// PCL stuff
+
+
+#define THRESHOLD_CAN 1000 //255.5
 #define MIN_CAN_SCORE 50000
 #define MIN_CAN_RADIUS 0.02
 #define MIN_CAN_HEIGHT 0.1
@@ -92,6 +111,10 @@
 
 ros::Publisher canPublisher;
 
+template <typename T> int sgn(T val) { // https://stackoverflow.com/questions/1903954/is-there-a-standard-sign-function-signum-sgn-in-c-c
+    return (T(0) < val) - (val < T(0));
+}
+
 struct Index3D {
 	size_t x; size_t y; size_t z;
 	
@@ -110,27 +133,27 @@ struct Index3D {
     }
     
     // Neighbour indices when looking along the x axis wit z to the top
-    Index3D right() {
+    Index3D right() const{
 		return Index3D(this->x, this->y-1, this->z);
 	}
 	
-	Index3D left() {
+	Index3D left() const{
 		return Index3D(this->x-1, this->y+1, this->z);
 	}
 	
-	Index3D behind() {
+	Index3D behind() const{
 		return Index3D(this->x+1, this->y, this->z);
 	}
 	
-	Index3D before() {
+	Index3D before() const{
 		return Index3D(this->x-1, this->y, this->z);
 	}
 	
-	Index3D bellow() {
+	Index3D bellow() const{
 		return Index3D(this->x, this->y, this->z-1);
 	}
 	
-	Index3D above() {
+	Index3D above() const{
 		return Index3D(this->x, this->y, this->z+1);
 	}
 };
@@ -147,6 +170,8 @@ namespace std { // Hash function for Index3D
 typedef Index3D VoxelIndex;
 typedef Index3D Size3D;
 typedef std::unordered_map<VoxelIndex, double> VoxelindexToScore;
+typedef Eigen::Vector3d Point3D;
+typedef Eigen::Vector3d Vector3D;
 
 template <class T> class Array3D { // from: https://stackoverflow.com/questions/2178909/how-to-initialize-3d-array-in-c
     size_t m_width, m_height, m_here, m_size;
@@ -183,7 +208,39 @@ template <class T> class Array3D { // from: https://stackoverflow.com/questions/
 typedef std::tuple<double, u_int8_t, u_int8_t, u_int8_t> RGBVoxel;
 typedef Array3D<RGBVoxel> RGBVoxelgrid; // Each voxel with occupancy probability and RGB color channels
 typedef Array3D<float> ScoreVoxelgrid;
-typedef std::vector<VoxelIndex> VoxelList;
+typedef std::unordered_set<VoxelIndex> VoxelList;
+
+void filterBoundary(VoxelList& object, VoxelList& boundary, RGBVoxelgrid& map) {
+	std::cout << "Object points: " << object.size() << std::endl;
+	for(VoxelIndex it: object) {
+		//std::cout << "Looking at " << it << "; neighbors: ";
+		//std::cout << std::get<0>(map(it.left())) << "," << std::get<0>(map(it.right())) << "," << std::get<0>(map(it.before())) << "," << std::get<0>(map(it.behind())) << ",";
+		bool has_left_neighbour = (object.find(it.left()) != object.end());
+		bool has_right_neighbour = (object.find(it.right()) != object.end());
+		bool has_before_neighbour = (object.find(it.before()) != object.end());
+		bool has_behind_neighbour = (object.find(it.behind()) != object.end());
+		//std::cout << "; has_neigh: " << has_left_neighbour << "," << has_right_neighbour << "," << has_before_neighbour << "," << has_behind_neighbour << std::endl;
+		//if(!has_left_neighbour && std::get<0>(map(it.left())) < 0.5 && std::get<0>(map(it.left())) > -0.5 ) {
+			//has_left_neighbour = true;
+		//}
+		//if(!has_right_neighbour && std::get<0>(map(it.right())) < 0.5 && std::get<0>(map(it.right())) > -0.5 ) {
+			//has_right_neighbour = true;
+		//}
+		//if(!has_before_neighbour && std::get<0>(map(it.before())) < 0.5 && std::get<0>(map(it.before())) > -0.5 ) {
+			//has_before_neighbour = true;
+		//}
+		//if(!has_behind_neighbour && std::get<0>(map(it.behind())) < 0.5 && std::get<0>(map(it.behind())) > -0.5 ) {
+			//has_behind_neighbour = true;
+		//}
+		if(has_left_neighbour && has_right_neighbour && has_before_neighbour && has_behind_neighbour) {
+			//std::cout << "skip\n";
+			continue;
+		}
+		else
+			boundary.insert(it);
+	}
+	std::cout << "Boundary points: " << boundary.size() << std::endl;
+}
 
 void floodfill(VoxelindexToScore& candidates, const VoxelIndex start, VoxelList& object) {
 	// Puts all indices from candidates into object if they are connected to start via the 6 Neighbourhood; removes moved indices from candidates
@@ -200,7 +257,7 @@ void floodfill(VoxelindexToScore& candidates, const VoxelIndex start, VoxelList&
 		#endif
 		posToLookAt.pop();
 		if(candidates.find(here)!=candidates.end()) { // Still in candidate list, not yet considered
-			object.push_back(here);
+			object.insert(here);
 			candidates.erase(here);
 			// Test neighbours
 			// y
@@ -336,6 +393,102 @@ VoxelIndex getMax(VoxelindexToScore& candidates) {
 	return ret;
 }
 
+/** \brief Fits a cylinder to the voxels specified in points
+ * 
+ * \param count Number of cylinder for debug plotting
+ * \param nearestNeighbourNormal Number of neighbours to consider for the normal estimation -> have only a few 10 to 100!
+ * \param normalDistanceWeight trade-off between normal orientation and point position in error
+ * \param RANSACmaxIter Limit RANSAC iterations reducing runtime
+ * \param CylLowerRad Hard lower limit on the allowed cylinder radius in [m]
+ * \param CylUpperRad Hard upper limit on the allowed cylinder radius in [m]
+ * \param expectedNormal Prior knowledge of the expected cylinder axis
+ * \param allowedDevFromExpNormal Allowed deviation from expected cylinder axis in [°]
+ * 
+ * */
+bool pclCylinderFit(VoxelList& points, double& radius, Vector3D& normal,Point3D& pointOnAxis, u_int32_t count,
+				u_int32_t nearestNeighbourNormal = 8, 
+				double normalDistanceWeight = 0.1, 
+				u_int32_t RANSACmaxIter = 100000,
+				double RANSACmaxDistThres = 0.02, 
+				double CylLowerRad = 0.01, double CylUpperRad = 0.1,
+				Vector3D expectedNormal = Vector3D(0., 0., 1.),  
+				double allowedDevFromExpNormal = 10.) { 
+	pcl::PassThrough<PointT> pass;
+	pcl::NormalEstimation<PointT, pcl::Normal> ne;
+	pcl::SACSegmentationFromNormals<PointT, pcl::Normal> seg; 
+	pcl::ExtractIndices<PointT> extract;
+	pcl::ExtractIndices<pcl::Normal> extract_normals;
+	pcl::search::KdTree<PointT>::Ptr tree (new pcl::search::KdTree<PointT> ());
+	
+	pcl::PointCloud<PointT>::Ptr cloud_filtered (new pcl::PointCloud<PointT>(1,1));
+	pcl::PointCloud<pcl::Normal>::Ptr cloud_normals (new pcl::PointCloud<pcl::Normal>);
+
+	for (auto& it: points) {
+		cloud_filtered->push_back(PointT(START_X + it.x * STEP_SIZE, START_Y + it.y * STEP_SIZE, START_Z + it.z * STEP_SIZE));
+	}
+	
+	ne.setSearchMethod (tree);
+	ne.setInputCloud (cloud_filtered);
+	ne.setKSearch (nearestNeighbourNormal); 
+	ne.compute (*cloud_normals);
+	
+	seg.setOptimizeCoefficients (true);
+	seg.setModelType (pcl::SACMODEL_CYLINDER);
+	seg.setMethodType (pcl::SAC_RANSAC);
+	seg.setNormalDistanceWeight (normalDistanceWeight); 
+	seg.setMaxIterations (RANSACmaxIter);
+	seg.setDistanceThreshold (RANSACmaxDistThres); 
+	seg.setRadiusLimits (CylLowerRad, CylUpperRad); 
+	seg.setInputCloud (cloud_filtered);
+	seg.setInputNormals (cloud_normals);
+	seg.setEpsAngle(allowedDevFromExpNormal/180.*3.141); // See: https://answers.ros.org/question/61811/pcl-sacsegmentation-setaxis-and-setmodeltype-has-no-effect-in-output/
+	seg.setAxis( expectedNormal.cast<float>() );
+	
+	pcl::ModelCoefficients::Ptr coefficients_cylinder (new pcl::ModelCoefficients);
+	pcl::PointIndices::Ptr inliers_cylinder (new pcl::PointIndices);
+	seg.segment (*inliers_cylinder, *coefficients_cylinder);
+	
+	if(coefficients_cylinder->values.size() == 7) {
+		assert(coefficients_cylinder->values[2] != 0.);
+		while(abs(coefficients_cylinder->values[2]) > 2) {
+			coefficients_cylinder->values[0] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[3];
+			coefficients_cylinder->values[1] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[4];
+			coefficients_cylinder->values[2] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[5];
+		}
+		
+		pointOnAxis(0) = coefficients_cylinder->values[0];
+		pointOnAxis(1) = coefficients_cylinder->values[1];
+		pointOnAxis(2) = coefficients_cylinder->values[2];
+		normal(0) = coefficients_cylinder->values[3];
+		normal(1) = coefficients_cylinder->values[4];
+		normal(2) = coefficients_cylinder->values[5];
+		radius = coefficients_cylinder->values[6];
+		
+		#ifdef DEBUG		
+		std::cout << "Cylinder coefficients: " << *coefficients_cylinder << std::endl;
+		resetMarker();
+		table_marker.type = visualization_msgs::Marker::CYLINDER;
+		table_marker.id = count+1000;
+		table_marker.scale.x = coefficients_cylinder->values[6]*2;
+		table_marker.scale.y = coefficients_cylinder->values[6]*2;
+		table_marker.scale.z = 10.;
+		table_marker.pose.position.x = coefficients_cylinder->values[0];
+		table_marker.pose.position.y = coefficients_cylinder->values[1];
+		table_marker.pose.position.z = coefficients_cylinder->values[2];
+		//https://math.stackexchange.com/questions/60511/quaternion-for-an-object-that-to-point-in-a-direction
+		tf2::Quaternion myQuaternion;
+		double theta = std::acos(coefficients_cylinder->values[5]); // = acos(n_z)
+		myQuaternion.setRotation(tf2::Vector3(-1.*coefficients_cylinder->values[4], coefficients_cylinder->values[3], 0), theta);
+		table_marker.pose.orientation = tf2::toMsg(myQuaternion);
+		table_marker.header.stamp = ros::Time();
+		table_marker.ns = "CylinderFitPCL";
+		vis_pub.publish( table_marker );
+		#endif
+		return true;
+	}	
+	return false;
+}
+
 /* Concept for finding cans
  * 
  * Where to look? -> above table resulting from visual and tactile exploration --> in area from x/y_min till x/y_max and up to ~40 cm above
@@ -352,7 +505,7 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 	VoxelindexToScore candidates;
 	generateCanCandidates(map, candidates, size, THRESHOLD_CAN);
 	
-	#ifdef DEBUG
+	#ifdef DEBUG // Display can points
 	resetMarker();
 	table_marker.type = visualization_msgs::Marker::POINTS;
 	table_marker.id = 0;
@@ -363,6 +516,7 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 		p.z = START_Z + it.first.z * STEP_SIZE;
 		table_marker.points.push_back(p);
 	}
+	table_marker.ns = "Candidates";
 	table_marker.header.stamp = ros::Time();
 	vis_pub.publish( table_marker );
 	#endif
@@ -374,37 +528,55 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 		
 		VoxelList can;
 		floodfill(candidates, getMax(candidates), can);
+		VoxelList boundary;
+		filterBoundary(can, boundary, map);
 		
-		octomath::Vector3 centroid(0.,0.,0.);
+		#ifdef DEBUG // Display Boundary
+		resetMarker();
+		table_marker.type = visualization_msgs::Marker::POINTS;
+		table_marker.color.r = 0.0;
+		table_marker.color.g = 0.0;
+		table_marker.color.b = 1.0;
+		table_marker.id = count+6;
+		for (auto& it: boundary) {
+			geometry_msgs::Point p;
+			p.x = START_X + it.x * STEP_SIZE;
+			p.y = START_Y + it.y * STEP_SIZE;
+			p.z = START_Z + it.z * STEP_SIZE;
+			table_marker.points.push_back(p);
+		}
+		table_marker.ns = "Boundary";
+		table_marker.header.stamp = ros::Time();
+		vis_pub.publish( table_marker );
+		#endif
+		
+		double radius = 0.;
+		Vector3D normal; normal << 0,0,0;
+		Point3D pointOnAxis; pointOnAxis << 0,0,0;
+		if(!pclCylinderFit(boundary, radius, normal, pointOnAxis, count))
+			continue;
+		else
+			std::cout << "Valid PCL fit\n";
+		
 		u_int32_t N = 0;
-		double min_x=1000, max_x=-1000, min_y=1000, max_y=-1000, min_z=1000, max_z=-1000;
+		double max_z=-1000;
 		double score = 0;
-		for (auto& it: can) {
-			double x = START_X+STEP_SIZE*(it.x-0.5);
-			double y = START_Y+STEP_SIZE*(it.y-0.5);
+		for (auto& it: can) { // Even better to only do over inliers ...
 			double z = START_Z+STEP_SIZE*(it.z-0.5);
-			octomath::Vector3 here(x,y,z);
-			
-			N++;
-			centroid+=here;
-			if(x < min_x) min_x = x;
-			if(y < min_y) min_y = y;
-			if(z < min_z) min_z = z;
-			if(x > max_x) max_x = x;
-			if(y > max_y) max_y = y;
 			if(z > max_z) max_z = z;
 			score += canScore(map, it);
 		}
-		
-		double radius = (max_y-min_y)/2.0;
-		double height = max_z-START_Z;
+		double height = max_z-START_Z; // distance between highest can point and table
 		
 		if(score > MIN_CAN_SCORE && radius > MIN_CAN_RADIUS && height > MIN_CAN_HEIGHT && height < MAX_CAN_HEIGHT) { // Filter for real cans
 			count++;
-			centroid/=N;
+			double center_z = START_Z + height / 2;
+			double wantedOffset = pointOnAxis(2) - center_z;
+			double normalSteps = -1. * wantedOffset/normal(2);
+			Point3D centroid; centroid = pointOnAxis + normalSteps*normal;
 			
 			filter_octomap::can can_msg;
-			can_msg.centroid_position.x = centroid.x(); can_msg.centroid_position.y = centroid.y(); can_msg.centroid_position.z = centroid.z();
+			can_msg.centroid_position.x = centroid(0); can_msg.centroid_position.y = centroid(1); can_msg.centroid_position.z = centroid(2);
 			can_msg.height = height;
 			can_msg.radius = radius;
 			can_msg.score = score;
@@ -413,8 +585,6 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 			#ifdef DEBUG
 			std::cout << "Found " << N << " can points\n";
 			std::cout << "Can middle at: " << centroid << "\n";
-			std::cout << "Minima: (" << min_x << "," << min_y << "," << min_z << "); maxima: ("
-						<< max_x << "," << max_y << "," << max_z << ")\n"; 
 			std::cout << "Can score: " << score << "\n";
 			
 			resetMarker();
@@ -427,6 +597,7 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 			table_marker.pose.position.y = centroid.y();
 			table_marker.pose.position.z = centroid.z();
 			table_marker.header.stamp = ros::Time();
+			table_marker.ns = "CylinderFit";
 			vis_pub.publish( table_marker );
 			#endif
 		}

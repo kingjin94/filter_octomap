@@ -20,6 +20,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(octomap REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread )
+find_package(PCL 1.2 REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -137,11 +138,15 @@ catkin_package(
 include_directories(include 
                     ${catkin_INCLUDE_DIRS} 
                     ${Boost_INCLUDE_DIRS} 
-                    ${octomap_INCLUDE_DIRS})
+                    ${octomap_INCLUDE_DIRS}
+                    ${PCL_INCLUDE_DIRS})
                     
 link_directories(${catkin_LIBRARY_DIRS}
                  ${Boost_LIBRARY_DIRS}
-                 ${octomap_LIBRARY_DIRS}) 
+                 ${octomap_LIBRARY_DIRS}
+                 ${PCL_LIBRARY_DIRS}) 
+                 
+add_definitions(${PCL_DEFINITIONS})
                  
 set(SOURCE_FILES src/planningSceneUpdate_entropyCalc.cpp)
 
@@ -186,7 +191,8 @@ target_link_libraries(octomap_to_table
   ${catkin_LIBRARIES}
 )
 target_link_libraries(octomap_to_cans
-  ${catkin_LIBRARIES}
+  ${catkin_LIBRARIES} 
+  ${PCL_LIBRARIES}
 )
 target_link_libraries(octomap_generate_empty_start
   ${catkin_LIBRARIES}
