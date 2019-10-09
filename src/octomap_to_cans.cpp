@@ -44,6 +44,7 @@
 #include "filter_octomap/can.h"
 #include "filter_octomap/cans.h"
 #include <assert.h>
+#include <Eigen/Dense>
 
 #include <octomap/ColorOcTree.h>
 #include <pcl/ModelCoefficients.h>
@@ -408,7 +409,7 @@ VoxelIndex getMax(VoxelindexToScore& candidates) {
 bool pclCylinderFit(VoxelList& points, double& radius, Vector3D& normal,Point3D& pointOnAxis, u_int32_t count,
 				u_int32_t nearestNeighbourNormal = 8, 
 				double normalDistanceWeight = 0.1, 
-				u_int32_t RANSACmaxIter = 100000,
+				u_int32_t RANSACmaxIter = 1000,
 				double RANSACmaxDistThres = 0.02, 
 				double CylLowerRad = 0.01, double CylUpperRad = 0.1,
 				Vector3D expectedNormal = Vector3D(0., 0., 1.),  
@@ -449,11 +450,14 @@ bool pclCylinderFit(VoxelList& points, double& radius, Vector3D& normal,Point3D&
 	seg.segment (*inliers_cylinder, *coefficients_cylinder);
 	
 	if(coefficients_cylinder->values.size() == 7) {
-		assert(coefficients_cylinder->values[2] != 0.);
+		if(abs(coefficients_cylinder->values[2]) < 0.1) {
+			std::cout << "z of Normal to small\n";
+			return false;
+		}
 		while(abs(coefficients_cylinder->values[2]) > 2) {
-			coefficients_cylinder->values[0] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[3];
-			coefficients_cylinder->values[1] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[4];
-			coefficients_cylinder->values[2] += -1.*sgn(coefficients_cylinder->values[5])*coefficients_cylinder->values[5];
+			coefficients_cylinder->values[0] += -1.*sgn(coefficients_cylinder->values[5])*sgn(coefficients_cylinder->values[2])*coefficients_cylinder->values[3];
+			coefficients_cylinder->values[1] += -1.*sgn(coefficients_cylinder->values[5])*sgn(coefficients_cylinder->values[2])*coefficients_cylinder->values[4];
+			coefficients_cylinder->values[2] += -1.*sgn(coefficients_cylinder->values[5])*sgn(coefficients_cylinder->values[2])*coefficients_cylinder->values[5];
 		}
 		
 		pointOnAxis(0) = coefficients_cylinder->values[0];
@@ -553,10 +557,18 @@ void findCans(RGBVoxelgrid& map, const Size3D size) {
 		double radius = 0.;
 		Vector3D normal; normal << 0,0,0;
 		Point3D pointOnAxis; pointOnAxis << 0,0,0;
-		if(!pclCylinderFit(boundary, radius, normal, pointOnAxis, count))
+		if(!pclCylinderFit(boundary, radius, normal, pointOnAxis, count)) {
+			std::cout << "No PCL solution\n";
 			continue;
-		else
-			std::cout << "Valid PCL fit\n";
+		}
+		else {
+			if(Eigen::isnan(normal.array()).any() || Eigen::isnan(pointOnAxis.array()).any() || std::isnan(radius)) {
+				std::cout << "Unusable solution (NaN)\n";
+				continue;
+			} else {
+				std::cout << "Valid PCL fit\n";
+			}
+		}
 		
 		u_int32_t N = 0;
 		double max_z=-1000;
@@ -702,6 +714,7 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 	changeToGrid(octomap, grid, lower_vertex, upper_vertex);
 	ROS_INFO("Octomap converted to voxel-grid");
     findCans(grid, size);
+    ROS_INFO("Callback done");
 
 	// free memory
 	delete tree;
