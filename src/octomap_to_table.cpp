@@ -40,12 +40,13 @@
 #include <iostream>
 #include "filter_octomap/table.h"
 #include <assert.h>
+#include <algorithm>
 
 #include <octomap/ColorOcTree.h>
 
 #define COLOR_OCTOMAP_SERVER 1
 
-#define THRESHOLD_BELONG 0.2
+#define TABLE_THRESHOLD 250
 /* Debuging*/
 //#define DEBUG_COUT 1
 #define DEBUG 1
@@ -74,33 +75,9 @@
 
 ros::Publisher tablePublisher;
 
-template <class T> class Array3D { // from: https://stackoverflow.com/questions/2178909/how-to-initialize-3d-array-in-c
-    size_t m_width, m_height, m_here, m_size;
-    std::vector<T> m_data;
-  public:
-    Array3D(size_t x, size_t y, size_t z, T init = 0):
-      m_width(x), m_height(y), m_data(x*y*z, init), m_here(0), m_size(x*y*z)
-    {}
-    T& operator()(size_t x, size_t y, size_t z) {
-		assert(x < m_width);
-		assert(y < m_height);
-		assert(x*y*z < m_size);
-        return m_data.at(x + y * m_width + z * m_width * m_height);
-    }
-    T& operator()(size_t index) {
-		return m_data.at(index);
-	}
-    T& operator()() {
-		return m_data.at(m_here);
-	}
-	T& operator++() {
-		m_here++;
-		m_here%=(m_width * m_height);
-		return m_data.at(m_here);
-	}
-};
+#include "octomap_to_x_helper.hxx"
 
-inline double convolveOneTable(Array3D<double>& map, int x, int y, int z) {
+inline double tableScore(RGBVoxelgrid& map, VoxelIndex index, const Size3D size) {
 	// Returns tableness at position (x,y,z) in map
 	// Tableness is determined in a 5x5 neighbourhood
 	// The top is assumed in positive z direction
@@ -109,233 +86,257 @@ inline double convolveOneTable(Array3D<double>& map, int x, int y, int z) {
 	//			  unknown bellow the surface (0 for z-1)
 	//			  and occupied on the lower side (3.5 for z-2)
 	double result = 0;
+	//std::cout << "Am at " << index << " with map of size " << size << std::endl;
+	size_t neg_x = std::min(index.x, (size_t) 2);
+	size_t pos_x = std::min(size.x-index.x, (size_t) 2);
+	size_t neg_y = std::min(index.y, (size_t) 2);
+	size_t pos_y = std::min(size.y-index.y, (size_t) 2);
+	//std::cout << "Wanted offsets: " << neg_x << "," << pos_x << "," << neg_y << "," << pos_y << std::endl;
 	
-	for(int i = x-2; i < x+2; i++) // over x
+	for(int i = index.x-neg_x; i < index.x+pos_x; i++) // over x
     {
-		for(int j = y-2; j < y+2; j++) // over y
+		for(int j = index.y-neg_y; j < index.y+pos_y; j++) // over y
         {
-			result += 3.5*map(i,j,z-2);
-			result += 3.5*map(i,j,z);
-			result += -2.*map(i,j,z+1);
-			result += -2.*map(i,j,z+2);
+			//std::cout << "Looking at " << i << "," << j << std::endl;
+			if(index.z>=2)
+				result += 3.5*std::get<0>(map(i,j,index.z-2));
+			result += 3.5*std::get<0>(map(i,j,index.z));
+			if(index.z<size.z-1)
+				result += -2.*std::get<0>(map(i,j,index.z+1));
+			if(index.z<size.z-2)
+				result += -2.*std::get<0>(map(i,j,index.z+2));
 		}
 	}		
 	return result;
 }
 
 void floodfill(Array3D<double>& map, int x, int y, int z, Array3D<int>& explored, double threshold) {
-	// Marks all places in explored true which are above the threshold in map and are connected to the first x,y,z via 6-Neighbourhood
-	#ifdef DEBUG_COUT
-	std::cout << "Starting at " << x << "," << y << "," << z << "\n";
-	#endif
-	std::stack<std::tuple<int,int,int>> posToLookAt;
-	posToLookAt.emplace(x,y,z);
-	while(!posToLookAt.empty()) {
-		std::tuple<int,int,int> here = posToLookAt.top();
-		double x = std::get<0>(here);
-		double y = std::get<1>(here);
-		double z = std::get<2>(here);
-		#ifdef DEBUG_COUT
-		std::cout << "\nStack size: " << posToLookAt.size() << "\n";
-		std::cout << "Looking at " << x << "," << y << "," << z << "\n";
-		#endif
-		posToLookAt.pop();
-		if(explored(x,y,z)!=0) continue;
-		else {
-			explored(x,y,z) = 1;
-			#ifdef DEBUG_COUT
-			std::cout << "Is new; set to " << explored(x,y,z) << "; local tableness: " << map(x,y,z) << "\n";
-			#endif
-			// Test neighbours and call floodfill if tableness high enough
-			if(x>0) {
-				if(map(x-1,y,z) > threshold) { 
-					posToLookAt.emplace(x-1,y,z); 
-					#ifdef DEBUG_COUT
-					std::cout << "-x inserted ";
-					#endif
-					}
-				}
-			if(y>0) {
-				if(map(x,y-1,z) > threshold) {
-					posToLookAt.emplace(x,y-1,z);
-					#ifdef DEBUG_COUT
-					std::cout << "-y inserted ";
-					#endif
-				}
-			}
-			if(z>0) {
-				if(map(x,y,z-1) > threshold) {
-					posToLookAt.emplace(x,y,z-1);
-					#ifdef DEBUG_COUT
-					std::cout << "-z inserted ";
-					#endif
-				}
-			}
-			if(x<STEPS_X-4-1) {
-				if(map(x+1,y,z) > threshold) {
-					posToLookAt.emplace(x+1,y,z);
-					#ifdef DEBUG_COUT
-					std::cout << "+x inserted ";
-					#endif
-				}
-			}
-			if(y<STEPS_Y-4-1) {
-				if(map(x,y+1,z) > threshold) {
-					posToLookAt.emplace(x,y+1,z);
-					#ifdef DEBUG_COUT
-					std::cout << "+y inserted ";
-					#endif
-				}
-			}
-			if(z<STEPS_Z-4-1) {
-				if(map(x,y,z+1) > threshold) { 
-					posToLookAt.emplace(x,y,z+1);
-					#ifdef DEBUG_COUT
-					std::cout << "+z inserted ";
-					#endif
-				}
-			}
-		}
-	}
+	//// Marks all places in explored true which are above the threshold in map and are connected to the first x,y,z via 6-Neighbourhood
+	//#ifdef DEBUG_COUT
+	//std::cout << "Starting at " << x << "," << y << "," << z << "\n";
+	//#endif
+	//std::stack<std::tuple<int,int,int>> posToLookAt;
+	//posToLookAt.emplace(x,y,z);
+	//while(!posToLookAt.empty()) {
+		//std::tuple<int,int,int> here = posToLookAt.top();
+		//double x = std::get<0>(here);
+		//double y = std::get<1>(here);
+		//double z = std::get<2>(here);
+		//#ifdef DEBUG_COUT
+		//std::cout << "\nStack size: " << posToLookAt.size() << "\n";
+		//std::cout << "Looking at " << x << "," << y << "," << z << "\n";
+		//#endif
+		//posToLookAt.pop();
+		//if(explored(x,y,z)!=0) continue;
+		//else {
+			//explored(x,y,z) = 1;
+			//#ifdef DEBUG_COUT
+			//std::cout << "Is new; set to " << explored(x,y,z) << "; local tableness: " << map(x,y,z) << "\n";
+			//#endif
+			//// Test neighbours and call floodfill if tableness high enough
+			//if(x>0) {
+				//if(map(x-1,y,z) > threshold) { 
+					//posToLookAt.emplace(x-1,y,z); 
+					//#ifdef DEBUG_COUT
+					//std::cout << "-x inserted ";
+					//#endif
+					//}
+				//}
+			//if(y>0) {
+				//if(map(x,y-1,z) > threshold) {
+					//posToLookAt.emplace(x,y-1,z);
+					//#ifdef DEBUG_COUT
+					//std::cout << "-y inserted ";
+					//#endif
+				//}
+			//}
+			//if(z>0) {
+				//if(map(x,y,z-1) > threshold) {
+					//posToLookAt.emplace(x,y,z-1);
+					//#ifdef DEBUG_COUT
+					//std::cout << "-z inserted ";
+					//#endif
+				//}
+			//}
+			//if(x<STEPS_X-4-1) {
+				//if(map(x+1,y,z) > threshold) {
+					//posToLookAt.emplace(x+1,y,z);
+					//#ifdef DEBUG_COUT
+					//std::cout << "+x inserted ";
+					//#endif
+				//}
+			//}
+			//if(y<STEPS_Y-4-1) {
+				//if(map(x,y+1,z) > threshold) {
+					//posToLookAt.emplace(x,y+1,z);
+					//#ifdef DEBUG_COUT
+					//std::cout << "+y inserted ";
+					//#endif
+				//}
+			//}
+			//if(z<STEPS_Z-4-1) {
+				//if(map(x,y,z+1) > threshold) { 
+					//posToLookAt.emplace(x,y,z+1);
+					//#ifdef DEBUG_COUT
+					//std::cout << "+z inserted ";
+					//#endif
+				//}
+			//}
+		//}
+	//}
 }
 
 double generateTableMap(Array3D<double>& map, Array3D<double>& tableness, int& max_i, int& max_j, int& max_k) {
-	double maxTableness = -100000;
-	for(int i = 0; i < STEPS_X-4; i++) // over x
-    {
-		#ifdef DEBUG_COUT
-		std::cout << "\nj     | i: ";
-		std::cout << i;
-		std::cout << "\n";
-		#endif
-		for(int j = 0; j < STEPS_Y-4; j++) // over y
-        {
-			#ifdef DEBUG_COUT
-			std::cout << std::setw(3) << j;
-			std::cout << ": ";
-			#endif
-            for(int k = 0; k < STEPS_Z-4; k++) // over z
-            {
-				tableness(i,j,k) = convolveOneTable(map, i+2, j+2, k+2);
-				if(tableness(i,j,k) > maxTableness) {
-					maxTableness = tableness(i,j,k);
-					max_i = i;
-					max_j = j;
-					max_k = k;
-				}
-				#ifdef DEBUG_COUT
-				std::cout << std::setw( 6 ) << std::setprecision( 4 ) << tableness(i,j,k);
-				std::cout << " ";
-				#endif
-			}
-			#ifdef DEBUG_COUT
-			std::cout << "\n";
-			#endif
-		}
-	}
-	std::cout << "Best tableness (" << maxTableness << ") found at (" << max_i << "," << max_j << "," << max_k << ")\n";
-	return maxTableness;
+	//double maxTableness = -100000;
+	//for(int i = 0; i < STEPS_X-4; i++) // over x
+    //{
+		//#ifdef DEBUG_COUT
+		//std::cout << "\nj     | i: ";
+		//std::cout << i;
+		//std::cout << "\n";
+		//#endif
+		//for(int j = 0; j < STEPS_Y-4; j++) // over y
+        //{
+			//#ifdef DEBUG_COUT
+			//std::cout << std::setw(3) << j;
+			//std::cout << ": ";
+			//#endif
+            //for(int k = 0; k < STEPS_Z-4; k++) // over z
+            //{
+				//tableness(i,j,k) = convolveOneTable(map, i+2, j+2, k+2);
+				//if(tableness(i,j,k) > maxTableness) {
+					//maxTableness = tableness(i,j,k);
+					//max_i = i;
+					//max_j = j;
+					//max_k = k;
+				//}
+				//#ifdef DEBUG_COUT
+				//std::cout << std::setw( 6 ) << std::setprecision( 4 ) << tableness(i,j,k);
+				//std::cout << " ";
+				//#endif
+			//}
+			//#ifdef DEBUG_COUT
+			//std::cout << "\n";
+			//#endif
+		//}
+	//}
+	//std::cout << "Best tableness (" << maxTableness << ") found at (" << max_i << "," << max_j << "," << max_k << ")\n";
+	//return maxTableness;
 }
 
-void findTable(Array3D<double>& map) {
+void findTable(RGBVoxelgrid& map, const Size3D& size) {
 	// Where in map could tables be?
-	//double tableness[STEPS_X-4][STEPS_Y-4][STEPS_Z-4];
-	Array3D<double> tableness(STEPS_X-4, STEPS_Y-4, STEPS_Z-4);
-	int max_i = 0, max_j = 0, max_k = 0;
-	double maxTableness = generateTableMap(map, tableness, max_i, max_j, max_k);
+	VoxelindexToScore candidates;
+	generateCandidates(map, candidates, size, tableScore, TABLE_THRESHOLD);
 	
-	// Floodfill from best tableness to find all points making up the table
-	//bool explored[STEPS_X-4][STEPS_Y-4][STEPS_Z-4] = {}; // Pads with zero --> all false
-	Array3D<int> belongsToTable(STEPS_X-4, STEPS_Y-4, STEPS_Z-4, 0);
-	floodfill(tableness, max_i, max_j, max_k, belongsToTable, THRESHOLD_BELONG*maxTableness);
-	// Debug floodfill
-	#ifdef DEBUG
-	int msg_index = 0;
-	table_marker.points.clear();
-	for(int i = 2; i < STEPS_X-2; i++) // over x
-    {
-		#ifdef DEBUG_COUT
-		std::cout << "\nj     | i: ";
-		std::cout << i;
-		std::cout << "\n";
+	#ifdef DEBUG // Display table candidates
+	resetMarker();
+	table_marker.type = visualization_msgs::Marker::POINTS;
+	table_marker.id = 0;
+	for (auto& it: candidates) {
+		geometry_msgs::Point p;
+		p.x = START_X + it.first.x * STEP_SIZE;
+		p.y = START_Y + it.first.y * STEP_SIZE;
+		p.z = START_Z + it.first.z * STEP_SIZE;
+		table_marker.points.push_back(p);
+	}
+	table_marker.ns = "Candidates";
+	table_marker.header.stamp = ros::Time();
+	vis_pub.publish( table_marker );
+	std::cout << "Table markers ...";
+	#endif
+	
+	double best_table_score = -1.;
+	VoxelList best_table;
+	octomath::Vector3 best_centroid(0.,0.,0.);
+	octomath::Vector3 best_min(1000.,1000.,1000.);
+	octomath::Vector3 best_max(-1000.,-1000.,-1000.);
+	
+	while(!candidates.empty()) {
+		std::cout << "Best node at: " << getMax(candidates) << " with score " << candidates[getMax(candidates)] << std::endl;
+		
+		VoxelList table;
+		floodfill(candidates, getMax(candidates), table);
+		
+		//double min_x=1000, max_x=-1000, min_y=1000, max_y=-1000, min_z=1000, max_z=-1000;
+		octomath::Vector3 centroid(0.,0.,0.);
+		octomath::Vector3 min(1000.,1000.,1000.);
+		octomath::Vector3 max(-1000.,-1000.,-1000.);
+		double score = 0;
+		u_int32_t N = 0;
+		for (auto& it: table) { // Go over this table candidate
+			double x = START_X+STEP_SIZE*(it.x-0.5);
+			double y = START_Y+STEP_SIZE*(it.y-0.5);
+			double z = START_Z+STEP_SIZE*(it.z-0.5);
+			octomath::Vector3 here(x,y,z);
+			N++;
+			centroid+=here;
+			if(x < min.x()) min.x() = x;
+			if(y < min.y()) min.y() = y;
+			if(z < min.z()) min.z() = z;
+			if(x > max.x()) max.x() = x;
+			if(y > max.y()) max.y() = y;
+			if(z > max.z()) max.z() = z;
+			score += tableScore(map, it, size);
+		}
+		centroid/=N;
+		#ifdef DEBUG
+		std::cout << "Found " << N << " table points\n";
+		std::cout << "Table middle at: " << centroid << "\n";
+		std::cout << "Minima: (" << min.x() << "," << min.y() << "," << min.z() << "); maxima: ("
+					<< max.x() << "," << max.y() << "," << max.z() << ")\n"; 
+		std::cout << "Table score: " << score << "\n";
 		#endif
-		for(int j = 2; j < STEPS_Y-2; j++) // over y
-        {
-			#ifdef DEBUG_COUT
-			std::cout << std::setw(3) << j;
-			std::cout << ": ";
-			#endif
-            for(int k = 2; k < STEPS_Z-2; k++) // over z
-            {
-				if(belongsToTable(i-2,j-2,k-2)!=0) {
-					#ifdef DEBUG_COUT
-					std::cout << "+";
-					#endif
-					// See http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Points%20and%20Lines
-					geometry_msgs::Point p;
-					p.x = START_X + i * STEP_SIZE;
-					p.y = START_Y + j * STEP_SIZE;
-					p.z = START_Z + k * STEP_SIZE;
-					table_marker.points.push_back(p);
-				}
-				else {
-					#ifdef DEBUG_COUT
-					std::cout << "-";
-					#endif
-				}
-			}
-			#ifdef DEBUG_COUT
-			std::cout << "\n";
-			#endif
+		
+		if(score > best_table_score) {
+			best_table_score = score;
+			best_table = table;
+			best_centroid = centroid;
+			best_min = min;
+			best_max = max;
 		}
 	}
+	
+	#ifdef DEBUG
+	std::cout << "============\n" << "Best Table: \n";
+	std::cout << "Table middle at: " << best_centroid << "\n";
+	std::cout << "Minima: " << best_min << "; maxima: "<< best_max << "\n"; 
+	std::cout << "Table score: " << best_table_score << "\n";
+	
+	// Display best table points
+	resetMarker();
+	table_marker.type = visualization_msgs::Marker::POINTS;
+	table_marker.id = 1;
+	for (auto& it: best_table) {
+		geometry_msgs::Point p;
+		p.x = START_X + it.x * STEP_SIZE;
+		p.y = START_Y + it.y * STEP_SIZE;
+		p.z = START_Z + it.z * STEP_SIZE;
+		table_marker.points.push_back(p);
+	}
+	table_marker.ns = "Best Table points";
 	table_marker.header.stamp = ros::Time();
+	vis_pub.publish( table_marker );	
+			
+	resetMarker();
+	table_marker.type = visualization_msgs::Marker::CUBE;
+	table_marker.id = 2;
+	table_marker.scale.x = best_max.x() - best_min.x();
+	table_marker.scale.y = best_max.y() - best_min.y();
+	table_marker.scale.z = best_max.z() - best_min.z();
+	table_marker.pose.position.x = (best_max.x() + best_min.x())/2;
+	table_marker.pose.position.y = (best_max.y() + best_min.y())/2;
+	table_marker.pose.position.z = (best_max.z() + best_min.z())/2;
+	table_marker.header.stamp = ros::Time();
+	table_marker.ns = "SurfaceCube";
 	vis_pub.publish( table_marker );
 	#endif
 	
-	// Extract data about the table --> min / max in x,y,z; centroid; plane (normal + offset)
-	int N=0;
-	octomath::Vector3 centroid(0.,0.,0.);
-	double min_x=1000, max_x=-1000, min_y=1000, max_y=-1000, min_z=1000, max_z=-1000;
-	std::vector<octomath::Vector3>* pointsOnTable = new std::vector<octomath::Vector3>;
-	double score = 0;
-
-	for(int i = 2; i < STEPS_X-2; i++) // over x
-    {
-		double x = START_X+STEP_SIZE*i;
-		for(int j = 2; j < STEPS_Y-2; j++) // over y
-        {
-			double y = START_Y+STEP_SIZE*j;
-            for(int k = 2; k < STEPS_Z-2; k++) // over z
-            {
-				double z = START_Z+STEP_SIZE*k;
-				if(belongsToTable(i-2,j-2,k-2)!=0) {
-					octomath::Vector3 here(x,y,z);
-					N++;
-					centroid+=here;
-					if(x < min_x) min_x = x;
-					if(y < min_y) min_y = y;
-					if(z < min_z) min_z = z;
-					if(x > max_x) max_x = x;
-					if(y > max_y) max_y = y;
-					if(z > max_z) max_z = z;
-					pointsOnTable->push_back(octomath::Vector3(x,y,z));
-					score += tableness(i-2,j-2,k-2);
-				}
-			}
-		}
-	}
-	centroid/=N;
-	std::cout << "Found " << N << " table points\n";
-	std::cout << "Table middle at: " << centroid << "\n";
-	std::cout << "Minima: (" << min_x << "," << min_y << "," << min_z << "); maxima: ("
-				<< max_x << "," << max_y << "," << max_z << ")\n"; 
-	std::cout << "Table score: " << score << "\n";
-				
 	// plane fitting, assuming n_z = 1 (should be the case for a table), see: https://www.ilikebigbits.com/2015_03_04_plane_from_points.html
 	double xx=0, xy=0, xz=0, yy=0, yz=0, zz=0;
-	for(std::size_t i=0; i<pointsOnTable->size(); ++i) {
-		octomath::Vector3 r = pointsOnTable->at(i) - centroid;
+	for (auto& it: best_table) {
+		octomath::Vector3 r(START_X + it.x * STEP_SIZE, START_Y + it.y * STEP_SIZE, START_Z + it.z * STEP_SIZE);
+		r = r - best_centroid;
 		xx += r.x() * r.x();
 		xy += r.x() * r.y();
 		xz += r.x() * r.z();
@@ -351,48 +352,12 @@ void findTable(Array3D<double>& map) {
 	filter_octomap::table table_msg;
 	table_msg.header.stamp = ros::Time::now();
 	table_msg.header.frame_id = "world";
-	table_msg.centroid_position.x = centroid.x(); table_msg.centroid_position.y = centroid.y(); table_msg.centroid_position.z = centroid.z();
+	table_msg.centroid_position.x = best_centroid.x(); table_msg.centroid_position.y = best_centroid.y(); table_msg.centroid_position.z = best_centroid.z();
 	table_msg.normal.x = normal.x(); table_msg.normal.y = normal.y(); table_msg.normal.z = normal.z(); 
-	table_msg.max.x = max_x; table_msg.max.y = max_y; table_msg.max.z = max_z; 
-	table_msg.min.x = min_x; table_msg.min.y = min_y; table_msg.min.z = min_z; 
-	table_msg.score = score;
+	table_msg.max.x = best_max.x(); table_msg.max.y = best_max.y(); table_msg.max.z = best_max.z(); 
+	table_msg.min.x = best_min.x(); table_msg.min.y = best_min.y(); table_msg.min.z = best_min.z(); 
+	table_msg.score = best_table_score;
 	tablePublisher.publish(table_msg);
-}
-#ifdef COLOR_OCTOMAP_SERVER
-void changeToGrid(octomap::ColorOcTree* octomap, Array3D<double>& grid) {
-#else
-void changeToGrid(octomap::OcTree* octomap, Array3D<double>& grid) {
-#endif
-	int i; double x;
-	for(i=0, x=START_X; i < STEPS_X; i++, x += STEP_SIZE) // over x
-    {
-		//std::cout << "\ny     | x: ";
-		//std::cout << x;
-		//std::cout << "\n";
-		int j; double y;
-        for(j=0, y=START_Y; j < STEPS_Y; j++, y+= STEP_SIZE) // over y
-        {			
-			//std::cout << std::setw(6) << y;
-			//std::cout << ": ";
-			int k; double z;
-            for(k=0, z=START_Z; k < STEPS_Z; k++, z+= STEP_SIZE) // over z
-            {
-				if(!octomap->search(x, y, z)) { // if place never initilized
-					grid(i,j,k) = 0.; // don't know anything
-				} else { // already known -> just remember the log odds
-					grid(i,j,k) = octomap->search(x, y, z)->getLogOdds();
-				}
-				//if(grid(i,j,k) < -0.5)
-					//std::cout << "-";
-				//else if(grid(i,j,k) < 0.5)
-					//std::cout << "o";
-				//else
-					//std::cout << "+";
-				//std::cout << " ";
-            }
-            //std::cout << "\n";
-        }
-    }
 }
 
 /**
@@ -403,21 +368,13 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 {
 	// Test if right message type
 	ROS_INFO("Received message number %d", msg->header.seq);
-	#ifdef COLOR_OCTOMAP_SERVER
 	if(!((msg->id == "OcTree")||(msg->id == "ColorOcTree"))) {
-	#else
-	if(!(msg->id == "OcTree")) {
-	#endif
 		ROS_INFO("Non supported octree type");
 		return;
 	}
 
 	// creating octree
-	#ifdef COLOR_OCTOMAP_SERVER
 	octomap::ColorOcTree* octomap = NULL;
-	#else
-	octomap::OcTree* octomap = NULL;
-	#endif
 	octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
 
 	if (tree){
@@ -434,16 +391,19 @@ void chatterCallback(const octomap_msgs::Octomap::ConstPtr& msg)
 		ROS_INFO("Failed to deserialize octree message.");
 		return;
 	}
+	
+	const Size3D size = {STEPS_X+1, STEPS_Y+1, STEPS_Z+1};
 
-
-	Array3D<double> grid(STEPS_X, STEPS_Y, STEPS_Z);
-	changeToGrid(octomap, grid);
-    findTable(grid);
+	RGBVoxelgrid grid(size, std::make_tuple(-2., 0, 0, 0)); // Default to known occupied
+	octomath::Vector3 lower_vertex(START_X, START_Y, START_Z); // Define boundary of cube to search in
+	octomath::Vector3 upper_vertex(START_X+STEPS_X*STEP_SIZE, START_Y+STEPS_Y*STEP_SIZE, START_Z+STEPS_Z*STEP_SIZE); 
+	
+	changeToGrid(octomap, grid, lower_vertex, upper_vertex);
+    findTable(grid, size);
 
 	// free memory
 	delete tree;
 }
-// %EndTag(CALLBACK)%
 
 int main(int argc, char **argv)
 {
