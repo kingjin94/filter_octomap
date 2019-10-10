@@ -51,7 +51,6 @@
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
-#include <pcl/visualization/cloud_viewer.h>
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -146,7 +145,9 @@ bool pclCylinderFit(VoxelList& points, double& radius, Vector3D& normal,Point3D&
 	
 	pcl::ModelCoefficients::Ptr coefficients_cylinder (new pcl::ModelCoefficients);
 	pcl::PointIndices::Ptr inliers_cylinder (new pcl::PointIndices);
+	pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS); // Remove error message for non fitting model, is filtered afterwards
 	seg.segment (*inliers_cylinder, *coefficients_cylinder);
+	pcl::console::setVerbosityLevel(pcl::console::L_INFO);
 	
 	if(coefficients_cylinder->values.size() == 7) {
 		if(abs(coefficients_cylinder->values[2]) < 0.1) {
