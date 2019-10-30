@@ -54,11 +54,11 @@
 	#include "visualization_msgs/Marker.h"
 	#include "geometry_msgs/Point.h"
 	#define STEPS_X 75 // Right now we have 50 Steps / m
-	#define STEPS_Y 100
-	#define STEPS_Z 50
+	#define STEPS_Y 150
+	#define STEPS_Z 100
 	#define START_X 0. // in m
-	#define START_Y -1. // in m
-	#define START_Z 0 // in m
+	#define START_Y -1.5 // in m
+	#define START_Z -0.1 // in m
 	#define STEP_SIZE 0.02 // Size of cells on lowest level
 	ros::Publisher vis_pub;
 	visualization_msgs::Marker table_marker;
@@ -69,7 +69,7 @@
 	#define STEPS_Z 100
 	#define START_X 0. // in m
 	#define START_Y -1.5 // in m
-	#define START_Z 0 // in m
+	#define START_Z -0.1 // in m
 	#define STEP_SIZE 0.02 // Size of cells on lowest level
 #endif	
 
