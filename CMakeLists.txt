@@ -178,9 +178,9 @@ add_executable(octomap_generate_empty_start src/octomap_generate_empty_start.cpp
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-add_dependencies(planningSceneUpdate_entropyCalc ${catkin_LIBRARIES})
-add_dependencies(octomap_to_table ${catkin_LIBRARIES})
-add_dependencies(octomap_to_cans ${catkin_LIBRARIES})
+add_dependencies(planningSceneUpdate_entropyCalc ${catkin_LIBRARIES} filter_octomap_generate_messages_cpp)
+add_dependencies(octomap_to_table ${catkin_LIBRARIES} filter_octomap_generate_messages_cpp)
+add_dependencies(octomap_to_cans ${catkin_LIBRARIES} filter_octomap_generate_messages_cpp)
 add_dependencies(octomap_generate_empty_start ${catkin_LIBRARIES})
 
 ## Specify libraries to link a library or executable target against
